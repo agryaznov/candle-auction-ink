@@ -4,10 +4,10 @@ use ink_lang as ink;
 
 #[ink::contract]
 mod candle_auction {
-    use ink_storage::collections::Vec;
+    use ink_storage::collections::HashMap as StorageHashMap;
+
     /// Auction status
     /// logic taken from file:///home/greez/dev/polkadot/polkadot/doc/cargo-doc/src/polkadot_runtime_common/traits.rs.html#153
-
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(::scale_info::TypeInfo))]
     pub enum AuctionStatus {
@@ -42,8 +42,10 @@ mod candle_auction {
         /// The number of blocks of Ending period, over which an auction may be retroactively ended.
         /// We assume this period starts right after Opening perid ends.
         ending_period: BlockNumber,
-        /// Bids storage: every bid is stored as a tuple (account, bid_amount)
-        bids: Vec<(AccountId,Balance)>,
+        /// Bids storage: we store only one last (top) bid per user as a hashmap (account => amount)
+        /// it is also serves as users balances ledger
+        // TODO: in order to make it 'candle' like, we'll need to store such a hashmap for each time (bidding) slot (e.g. block)
+        bids: StorageHashMap<AccountId,Balance>,
     }
 
     impl CandleAuction {
@@ -55,7 +57,7 @@ mod candle_auction {
                 start_block: start_block.unwrap_or(Self::env().block_number() + 1),
                 opening_period,
                 ending_period, 
-                bids: Vec::new()
+                bids: StorageHashMap::new()
              }
         }
 
@@ -84,10 +86,17 @@ mod candle_auction {
         }
 
         /// Message to place a bid
-        #[ink(message)]
-        pub fn bid(&self) {
-            // TODO: see pub fn handle_bid() for reference 
-
+        /// An account can bid by sending the lacking amount so that total amount she sent to this contract covers the bid
+        /// I any particual point of time, the user's top bid is equal to total balance she have sent to the contract
+        #[ink(message, payable)]
+        pub fn bid(&mut self) {
+            let bidder = Self::env().caller();
+            let mut balance = self.env().transferred_balance();
+            if let Some(old_balance) = self.bids.get(&bidder) {
+            // update new balance = old_balance + transferred_balance
+                balance += old_balance;
+            }
+            self.bids.insert(bidder, balance);
         }
 
         // Simply returns the current value of our `bool`.
@@ -100,8 +109,12 @@ mod candle_auction {
     /// Unit tests in Rust are normally defined within such a `#[cfg(test)]`
     /// module and test functions are marked with a `#[test]` attribute.
     /// The below code is technically just normal Rust code.
+    #[cfg(not(feature = "ink-experimental-engine"))]
     #[cfg(test)]
     mod tests {
+        /// Imports all the definitions from the outer scope so we can use them here.
+        use super::*;
+
         // TODO: run_to_block() similar to https://github.com/paritytech/polkadot/blob/f520483aa3e7ca93f7adabc0149d880712834eab/runtime/common/src/auctions.rs#L901
         fn run_to_block<T>(n: T::BlockNumber)
         where 
@@ -113,8 +126,6 @@ mod candle_auction {
                 block = ink_env::block_number::<T>().unwrap();
             }
         }
-        /// Imports all the definitions from the outer scope so we can use them here.
-        use super::*;
 
         /// Imports `ink_lang` so we can use `#[ink::test]`.
         use ink_lang as ink;
@@ -156,5 +167,95 @@ mod candle_auction {
             run_to_block::<Environment>(13);
             assert_eq!(candle_auction.get_status(), AuctionStatus::Ended);
         }
+
+        #[ink::test]
+        fn bidding_works() {
+            // given
+            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().alice;
+            let mut auction = CandleAuction::new(None,5,10);
+            // when
+            // Push block to 1 to make auction started
+            // Push the new execution context which sets Alice as caller and
+            // the `mock_transferred_balance` as the value which the contract
+            // will see as transferred to it.
+            run_to_block::<ink_env::DefaultEnvironment>(1);
+            // set_sender(alice);
+            // ink_env::test::set_value_transferred::<ink_env::DefaultEnvironment>(1);
+
+            // then 
+            // first bid should set Alice balance to _tranferred_ amount 
+            // which is always 500 in default test env (see https://github.com/paritytech/ink/blob/v3.0.0-rc6/crates/env/src/engine/off_chain/mod.rs#L209)
+            auction.bid();
+            assert_eq!(auction.bids.get(&alice),Some(&500));
+
+            // then
+            // further bids are adding up to balance
+            run_to_block::<ink_env::DefaultEnvironment>(2);
+            auction.bid();
+            assert_eq!(auction.bids.get(&alice),Some(&1000));
+
+        }
+
+    }
+
+    // wanted to use experimental fn ink_env::test::set_value_transferred()
+    // but those feature goes without ink_env::test::advance_block(), what makes it unsuitable for my tests
+    // leaving it here still for memo
+    #[cfg(feature = "ink-experimental-engine")]
+    #[cfg(test)]
+    mod tests_experimental_engine {
+        /// Imports all the definitions from the outer scope so we can use them here.
+        use super::*;
+
+        #[ink::test]
+        fn bidding_works() {
+            // given
+            let alice = default_accounts().alice;
+            set_balance(alice, 10);
+            let auction = CandleAuction::new(None,5,10);
+            // when
+            // Push block to 1 to make auction started
+            // Push the new execution context which sets Alice as caller and
+            // the `mock_transferred_balance` as the value which the contract
+            // will see as transferred to it.
+            run_to_block::<ink_env::DefaultEnvironment>(1);
+            set_sender(alice);
+            ink_env::test::set_value_transferred::<ink_env::DefaultEnvironment>(1);
+
+            // then 
+            // first bid should set Alice balance to tranferred amount 
+            auction.bid();
+            assert_eq!(auction.bids.get(&alice),Some(1));
+
+            // then
+            // further bids are adding up to balance
+            run_to_block::<ink_env::DefaultEnvironment>(2);
+            ink_env::test::set_value_transferred::<ink_env::DefaultEnvironment>(4);
+            auction.bid();
+            assert_eq!(auction.bids.get(&alice),Some(5));
+
+        }
+
+        // Tests helper functions 
+        fn set_sender(sender: AccountId) {
+            ink_env::test::set_caller::<ink_env::DefaultEnvironment>(sender);
+        }
+
+        fn default_accounts(
+        ) -> ink_env::test::DefaultAccounts<ink_env::DefaultEnvironment> {
+            ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+        }
+
+        fn set_balance(account_id: AccountId, balance: Balance) {
+            ink_env::test::set_account_balance::<ink_env::DefaultEnvironment>(
+                account_id, balance,
+            )
+        }
+
+        fn get_balance(account_id: AccountId) -> Balance {
+            ink_env::test::get_account_balance::<ink_env::DefaultEnvironment>(account_id)
+                .expect("Cannot get account balance")
+        }
+
     }
 }
