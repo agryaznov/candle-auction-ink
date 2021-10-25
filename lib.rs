@@ -46,6 +46,8 @@ mod candle_auction {
         /// it is also serves as users balances ledger
         // TODO: in order to make it 'candle' like, we'll need to store such a hashmap for each time (bidding) slot (e.g. block)
         bids: StorageHashMap<AccountId,Balance>,
+        /// winner = current top bidder
+        winner: Option<AccountId>,
     }
 
     impl CandleAuction {
@@ -57,7 +59,8 @@ mod candle_auction {
                 start_block: start_block.unwrap_or(Self::env().block_number() + 1),
                 opening_period,
                 ending_period, 
-                bids: StorageHashMap::new()
+                bids: StorageHashMap::new(),
+                winner: None,
              }
         }
 
@@ -99,7 +102,15 @@ mod candle_auction {
                 // update new balance = old_balance + transferred_balance
                 balance += old_balance;
             }
+
+            // do not accept bids lesser that current top bid
+            if let Some(winner) = self.winner {
+                assert!(balance > *self.bids.get(&winner).unwrap_or(&0));
+            }
+
+            // finally, accept bid
             self.bids.insert(bidder, balance);
+            self.winner = Some(bidder);
         }
     }
 
