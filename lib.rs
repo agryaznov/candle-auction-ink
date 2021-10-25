@@ -90,20 +90,17 @@ mod candle_auction {
         /// I any particual point of time, the user's top bid is equal to total balance she have sent to the contract
         #[ink(message, payable)]
         pub fn bid(&mut self) {
+            // fail unless auction is active
+            assert!(matches!(self.get_status(), AuctionStatus::OpeningPeriod | AuctionStatus::EndingPeriod));
+    
             let bidder = Self::env().caller();
             let mut balance = self.env().transferred_balance();
             if let Some(old_balance) = self.bids.get(&bidder) {
-            // update new balance = old_balance + transferred_balance
+                // update new balance = old_balance + transferred_balance
                 balance += old_balance;
             }
             self.bids.insert(bidder, balance);
         }
-
-        // Simply returns the current value of our `bool`.
-        // #[ink(message)]
-        // pub fn get(&self) -> bool {
-        //     self.value
-        // }
     }
 
     /// Unit tests in Rust are normally defined within such a `#[cfg(test)]`
@@ -166,6 +163,61 @@ mod candle_auction {
             assert_eq!(candle_auction.get_status(), AuctionStatus::EndingPeriod);
             run_to_block::<Environment>(13);
             assert_eq!(candle_auction.get_status(), AuctionStatus::Ended);
+        }
+
+        #[ink::test]
+        #[should_panic]
+        fn cannot_bid_until_started() {
+            // given
+            // Bob and his initial balance
+            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().bob;
+            // let bob_initial_bal = ink_env::test::get_account_balance::<ink_env::DefaultEnvironment>(bob);
+
+            // auction starts at block #5
+            let mut auction = CandleAuction::new(Some(5),5,10);
+
+            // when 
+            // and Bob tries to make a bid before block #5
+            auction.bid();
+
+            // then
+            // contract should just panic after this line
+
+            // then 
+            // the bid is not counted
+            // assert!(auction.bids.is_empty());
+
+            // and Bob's money are not taken
+            // assert_eq!(ink_env::test::get_account_balance::<ink_env::DefaultEnvironment>(bob), bob_initial_bal);
+        }
+
+        #[ink::test]
+        #[should_panic]
+        fn cannot_bid_when_ended() {
+            // given
+            // Bob and his initial balance
+            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().bob;
+            // let bob_initial_bal = ink_env::test::get_account_balance::<ink_env::DefaultEnvironment>(bob);
+
+            // auction starts at block #1 and ended after block #15
+            let mut auction = CandleAuction::new(None,5,10);
+
+            // when 
+            // Auction ended
+            run_to_block::<Environment>(16);
+
+            // and Bob tries to make a bid before block #5
+            auction.bid();
+
+            // then
+            // contract should just panic after this line
+
+            // then 
+            // the bid is not counted
+            // assert!(auction.bids.is_empty());
+
+            // and Bob's money are not taken
+            // assert_eq!(ink_env::test::get_account_balance::<ink_env::DefaultEnvironment>(bob), bob_initial_bal);
         }
 
         #[ink::test]
