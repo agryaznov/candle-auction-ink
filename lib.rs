@@ -7,7 +7,7 @@ mod candle_auction {
     use ink_storage::collections::HashMap as StorageHashMap;
 
     /// Auction status
-    /// logic taken from file:///home/greez/dev/polkadot/polkadot/doc/cargo-doc/src/polkadot_runtime_common/traits.rs.html#153
+    /// logic inspired by file:///home/greez/dev/polkadot/polkadot/doc/cargo-doc/src/polkadot_runtime_common/traits.rs.html#153
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(::scale_info::TypeInfo))]
     pub enum AuctionStatus {
@@ -15,14 +15,11 @@ mod candle_auction {
         NotStarted,
         /// We are in the starting period of the auction, collecting initial bids.
         OpeningPeriod,
-        // / We are in the ending period of the auction, where we are taking snapshots of the winning
-        // / bids. This state supports "sampling", where we may only take a snapshot every N blocks.
-        // / In this case, the first number is the current sample number, and the second number
-        // / is the sub-sample. i.e. for sampling every 20 blocks, the 25th block in the ending period
-        // / will be `EndingPeriod(1, 5)`.
-        // EndingPeriod(BlockNumber, BlockNumber),
-        EndingPeriod,
-        Ended
+        /// We are in the ending period of the auction, where we are taking snapshots of the winning
+        /// bids. Snapshots are taken currently on per-block basis, but this logic could be later evolve 
+        /// to take snapshots of on arbitrary length (in blocks)
+        EndingPeriod(BlockNumber),
+        Ended,
         // / We have completed the bidding process and are waiting for the VRF to return some acceptable
         // / randomness to select the winner. The number represents how many blocks we have been waiting.
         // VrfDelay(BlockNumber),
@@ -64,20 +61,18 @@ mod candle_auction {
              }
         }
 
-        /// Message to get the status of the auction given the current block number.
-        // TODO: see file:///home/greez/dev/polkadot/polkadot/doc/cargo-doc/src/polkadot_runtime_common/auctions.rs.html#322-343 for ref
-        #[ink(message)]
-    	pub fn get_status(&self) -> AuctionStatus {
-            let now = self.env().block_number();
+        // helper for getting auction status
+        fn status(&self, block: BlockNumber) -> AuctionStatus {
             let opening_period_last_block = self.start_block + self.opening_period - 1;
             let ending_period_last_block = opening_period_last_block + self.ending_period;
 
-            if now >= self.start_block  {
-                if now > opening_period_last_block {
-                    if now > ending_period_last_block {
+            if block >= self.start_block  {
+                if block > opening_period_last_block {
+                    if block > ending_period_last_block {
                         AuctionStatus::Ended
                     } else {
-                        AuctionStatus::EndingPeriod
+                        // number of slot = number of block inside ending period
+                        AuctionStatus::EndingPeriod(block - opening_period_last_block)
                     }
                 } else {
                         AuctionStatus::OpeningPeriod
@@ -88,13 +83,20 @@ mod candle_auction {
             }
         }
 
+        /// Message to get the status of the auction given the current block number.
+        #[ink(message)]
+    	pub fn get_status(&self) -> AuctionStatus {
+            let now = self.env().block_number();
+            self.status(now)
+        }
+
         /// Message to place a bid
         /// An account can bid by sending the lacking amount so that total amount she sent to this contract covers the bid
         /// I any particual point of time, the user's top bid is equal to total balance she have sent to the contract
         #[ink(message, payable)]
         pub fn bid(&mut self) {
             // fail unless auction is active
-            assert!(matches!(self.get_status(), AuctionStatus::OpeningPeriod | AuctionStatus::EndingPeriod));
+            assert!(matches!(self.get_status(), AuctionStatus::OpeningPeriod | AuctionStatus::EndingPeriod(_)));
     
             let bidder = Self::env().caller();
             let mut balance = self.env().transferred_balance();
@@ -183,9 +185,9 @@ mod candle_auction {
             run_to_block::<Environment>(5);
             assert_eq!(candle_auction.get_status(), AuctionStatus::OpeningPeriod);
             run_to_block::<Environment>(6);
-            assert_eq!(candle_auction.get_status(), AuctionStatus::EndingPeriod);
+            assert_eq!(candle_auction.get_status(), AuctionStatus::EndingPeriod(1));
             run_to_block::<Environment>(12);
-            assert_eq!(candle_auction.get_status(), AuctionStatus::EndingPeriod);
+            assert_eq!(candle_auction.get_status(), AuctionStatus::EndingPeriod(7));
             run_to_block::<Environment>(13);
             assert_eq!(candle_auction.get_status(), AuctionStatus::Ended);
         }
