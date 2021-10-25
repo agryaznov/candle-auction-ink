@@ -5,7 +5,7 @@ use ink_lang as ink;
 #[ink::contract]
 mod candle_auction {
     use ink_storage::collections::HashMap as StorageHashMap;
-
+    use ink_storage::Vec as StorageVec;
     /// Auction status
     /// logic inspired by file:///home/greez/dev/polkadot/polkadot/doc/cargo-doc/src/polkadot_runtime_common/traits.rs.html#153
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
@@ -39,12 +39,19 @@ mod candle_auction {
         /// The number of blocks of Ending period, over which an auction may be retroactively ended.
         /// We assume this period starts right after Opening perid ends.
         ending_period: BlockNumber,
-        /// Bids storage: we store only one last (top) bid per user as a hashmap (account => amount)
-        /// it is also serves as users balances ledger
-        // TODO: in order to make it 'candle' like, we'll need to store such a hashmap for each time (bidding) slot (e.g. block)
+        /// Bids storage: 
+        // / for each block during ending_period (aka sample) (outer hashmap), 
+        // / we store only one last (top) bid per user as a hashmap (account => amount) (inner hashmap)
+        // / (therefore it is also serves as users balances ledger)
+        // bids: StorageHashMap<BlockNumber, StorageHashMap<AccountId,Balance>>,
         bids: StorageHashMap<AccountId,Balance>,
         /// winner = current top bidder
         winner: Option<AccountId>,
+        /// WinningData = storage of winners per sample (block)
+        /// it's a vector of optional (AccountId, Balance) tuples representing winner in block (sample) along with her bid
+        /// 0-indexed value is winner for OpeningPeriod
+        /// i-indexed value is winner for sample (block) #i of EndingPeriod
+        winning_data: StorageVec<Option<(AccountId,Balance)>>,
     }
 
     impl CandleAuction {
@@ -52,16 +59,20 @@ mod candle_auction {
         /// initializes the start_block to next block (if not set).
         #[ink(constructor)]
         pub fn new(start_block: Option<BlockNumber>, opening_period: BlockNumber, ending_period: BlockNumber) -> Self {
+            let mut winning_data = StorageVec::<Option<(AccountId, Balance)>>::new();
+            (0..ending_period).for_each(|_| winning_data.push(None));
+
             Self { 
                 start_block: start_block.unwrap_or(Self::env().block_number() + 1),
                 opening_period,
                 ending_period, 
                 bids: StorageHashMap::new(),
                 winner: None,
+                winning_data
              }
         }
 
-        // helper for getting auction status
+        /// helper for getting auction status
         fn status(&self, block: BlockNumber) -> AuctionStatus {
             let opening_period_last_block = self.start_block + self.opening_period - 1;
             let ending_period_last_block = opening_period_last_block + self.ending_period;
@@ -83,6 +94,38 @@ mod candle_auction {
             }
         }
 
+        /// helper for handling bid
+        fn handle_bid(&mut self, bidder: AccountId, bid_increment: Balance, block: BlockNumber) {
+            // fail unless auction is active
+            let auction_status = self.status(block);
+            let offset = match auction_status {
+                AuctionStatus::OpeningPeriod => 0,
+                AuctionStatus::EndingPeriod(o) => o,
+                _ => return assert!(false, "Auction isn't active")
+            };
+
+            // assert!(matches!(self.get_status(), AuctionStatus::OpeningPeriod | AuctionStatus::EndingPeriod(_)));
+            
+            let mut bid = bid_increment;
+            if let Some(balance) = self.bids.get(&bidder) {
+                // update new_balance = old_balance + transferred_balance
+                bid += balance;
+            }
+
+            // do not accept bids lesser that current top bid
+            if let Some(winner) = self.winner {
+                let winners_balance = *self.bids.get(&winner).unwrap_or(&0);
+                assert!(bid > winners_balance, "You aren't outbidding {} with {}", bid, winners_balance);
+            }
+
+            // finally, accept bid
+            self.bids.insert(bidder, bid);
+            self.winner = Some(bidder);
+            // and update winning_data
+            // for retrospective candle-fashioned winner detection
+            self.winning_data.set(offset, Some((bidder,bid)));        
+        }
+
         /// Message to get the status of the auction given the current block number.
         #[ink(message)]
     	pub fn get_status(&self) -> AuctionStatus {
@@ -95,25 +138,10 @@ mod candle_auction {
         /// I any particual point of time, the user's top bid is equal to total balance she have sent to the contract
         #[ink(message, payable)]
         pub fn bid(&mut self) {
-            // fail unless auction is active
-            assert!(matches!(self.get_status(), AuctionStatus::OpeningPeriod | AuctionStatus::EndingPeriod(_)));
-    
+            let now = self.env().block_number();
             let bidder = Self::env().caller();
-            let mut balance = self.env().transferred_balance();
-            if let Some(old_balance) = self.bids.get(&bidder) {
-                // update new balance = old_balance + transferred_balance
-                balance += old_balance;
-            }
-
-            // do not accept bids lesser that current top bid
-            if let Some(winner) = self.winner {
-                let winners_balance = *self.bids.get(&winner).unwrap_or(&0);
-                assert!(balance > winners_balance, "You aren't outbidding {} with {}", balance, winners_balance);
-            }
-
-            // finally, accept bid
-            self.bids.insert(bidder, balance);
-            self.winner = Some(bidder);
+            let balance = self.env().transferred_balance();
+            self.handle_bid(bidder, balance, now);
         }
     }
 
@@ -298,6 +326,11 @@ mod candle_auction {
             // then 
             // Bob wins
             assert_eq!(auction.winner, Some(bob));
+        }
+
+        #[ink::test]
+        fn winning_data_constructed_correctly(){
+            assert!(false)
         }
     }
 }
