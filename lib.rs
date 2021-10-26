@@ -6,6 +6,21 @@ use ink_lang as ink;
 mod candle_auction {
     use ink_storage::collections::HashMap as StorageHashMap;
     use ink_storage::Vec as StorageVec;
+
+    /// The error types.
+    #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum Error {
+        /// Returned if bidding whilr auction isn't in active status
+        AuctionNotActive,
+        /// Placed bid_new isn't outbidding current winning nid_quo
+        /// (bid_new, bid_quo) returned for info
+        NotOutBidding(Balance,Balance),
+        /// Problems with winning_data observed
+        WinningDataCorrupted,
+    }
+    
+
     /// Auction status
     /// logic inspired by file:///home/greez/dev/polkadot/polkadot/doc/cargo-doc/src/polkadot_runtime_common/traits.rs.html#153
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
@@ -60,7 +75,7 @@ mod candle_auction {
         #[ink(constructor)]
         pub fn new(start_block: Option<BlockNumber>, opening_period: BlockNumber, ending_period: BlockNumber) -> Self {
             let mut winning_data = StorageVec::<Option<(AccountId, Balance)>>::new();
-            (0..ending_period).for_each(|_| winning_data.push(None));
+            (0..ending_period+1).for_each(|_| winning_data.push(None));
 
             Self { 
                 start_block: start_block.unwrap_or(Self::env().block_number() + 1),
@@ -72,7 +87,7 @@ mod candle_auction {
              }
         }
 
-        /// helper for getting auction status
+        /// Helper for getting auction status
         fn status(&self, block: BlockNumber) -> AuctionStatus {
             let opening_period_last_block = self.start_block + self.opening_period - 1;
             let ending_period_last_block = opening_period_last_block + self.ending_period;
@@ -94,18 +109,16 @@ mod candle_auction {
             }
         }
 
-        /// helper for handling bid
-        fn handle_bid(&mut self, bidder: AccountId, bid_increment: Balance, block: BlockNumber) {
+        /// Helper for handling bid
+        fn handle_bid(&mut self, bidder: AccountId, bid_increment: Balance, block: BlockNumber) -> Result<(), Error> {
             // fail unless auction is active
             let auction_status = self.status(block);
             let offset = match auction_status {
                 AuctionStatus::OpeningPeriod => 0,
                 AuctionStatus::EndingPeriod(o) => o,
-                _ => return assert!(false, "Auction isn't active")
+                _ => return Err(Error::AuctionNotActive)
             };
 
-            // assert!(matches!(self.get_status(), AuctionStatus::OpeningPeriod | AuctionStatus::EndingPeriod(_)));
-            
             let mut bid = bid_increment;
             if let Some(balance) = self.bids.get(&bidder) {
                 // update new_balance = old_balance + transferred_balance
@@ -115,7 +128,10 @@ mod candle_auction {
             // do not accept bids lesser that current top bid
             if let Some(winner) = self.winner {
                 let winners_balance = *self.bids.get(&winner).unwrap_or(&0);
-                assert!(bid > winners_balance, "You aren't outbidding {} with {}", bid, winners_balance);
+                if bid < winners_balance {
+                    return Err(Error::NotOutBidding(bid,winners_balance))
+                }
+                // assert!(bid > winners_balance, "You aren't outbidding {} with {}", bid, winners_balance);
             }
 
             // finally, accept bid
@@ -123,7 +139,10 @@ mod candle_auction {
             self.winner = Some(bidder);
             // and update winning_data
             // for retrospective candle-fashioned winner detection
-            self.winning_data.set(offset, Some((bidder,bid)));        
+            match self.winning_data.set(offset, Some((bidder,bid))) {
+                Err(ink_storage::collections::vec::IndexOutOfBounds) => Err(Error::WinningDataCorrupted),
+                Ok(_) => Ok(())
+            }     
         }
 
         /// Message to get the status of the auction given the current block number.
@@ -140,14 +159,23 @@ mod candle_auction {
         pub fn bid(&mut self) {
             let now = self.env().block_number();
             let bidder = Self::env().caller();
-            let balance = self.env().transferred_balance();
-            self.handle_bid(bidder, balance, now);
+            let bid_increment = self.env().transferred_balance();
+            match self.handle_bid(bidder, bid_increment, now) {
+                Err(Error::AuctionNotActive) => {
+                    panic!("Auction isn't active!")
+                },
+                Err(Error::NotOutBidding(bid_new,bid_quo)) => {
+                    panic!("You can't outbid {} with {}", bid_new, bid_quo)
+                },
+                Err(Error::WinningDataCorrupted) => {
+                    panic!("Auction's winning data corrupted!")
+                },
+                Ok(()) => {}
+            }
         }
     }
 
-    /// Unit tests in Rust are normally defined within such a `#[cfg(test)]`
-    /// module and test functions are marked with a `#[test]` attribute.
-    /// The below code is technically just normal Rust code.
+    // Tests
     #[cfg(not(feature = "ink-experimental-engine"))]
     #[cfg(test)]
     mod tests {
@@ -156,7 +184,6 @@ mod candle_auction {
         /// Imports `ink_lang` so we can use `#[ink::test]`.
         use ink_lang as ink;
 
-        // TODO: run_to_block() similar to https://github.com/paritytech/polkadot/blob/f520483aa3e7ca93f7adabc0149d880712834eab/runtime/common/src/auctions.rs#L901
         fn run_to_block<T>(n: T::BlockNumber)
         where 
             T: ink_env::Environment,
@@ -329,8 +356,66 @@ mod candle_auction {
         }
 
         #[ink::test]
-        fn winning_data_constructed_correctly(){
-            assert!(false)
+        fn winning_data_constructed_correctly() {
+            // given
+            // an auction with the following structure:
+            //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
+            //     | opening  |        ending         |     
+            let mut auction = CandleAuction::new(Some(2),4,7);
+
+            // Alice and Bob 
+            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().alice;
+            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().bob;
+
+            // when
+            // there is no bids
+            // then
+            // winning_data initialized with Nones
+            assert_eq!(auction.winning_data, [None; 8].iter().map(|o| *o).collect());
+
+            // when 
+            // there are bids in opening period
+            run_to_block::<Environment>(3);
+            // Alice bids 100
+            set_sender::<Environment>(alice,100);            
+            auction.bid();
+
+            run_to_block::<Environment>(5);
+            // Bob bids 100
+            set_sender::<Environment>(bob,101);            
+            auction.bid();
+            
+            // then 
+            // the top of these bids goes to index 0
+            assert_eq!(
+                auction.winning_data, 
+                [Some((bob,101)), None, None, None, None, None, None, None].iter().map(|o| *o).collect()
+            );
+
+            // when 
+            // bids added in Ending Period
+            run_to_block::<Environment>(7);
+            // Alice bids 102
+            set_sender::<Environment>(alice,2);            
+            auction.bid();
+
+            run_to_block::<Environment>(9);
+            // Bob bids 103
+            set_sender::<Environment>(bob,2);            
+            auction.bid();
+
+            run_to_block::<Environment>(11);
+            // Alice bids 104
+            set_sender::<Environment>(alice,2);            
+            auction.bid();
+
+            // then
+            // bids are accounted for correclty 
+            assert_eq!(
+                auction.winning_data, 
+                [Some((bob,101)), None, Some((alice,102)), None, Some((bob,103)), None, Some((alice,104)), None]
+                    .iter().map(|o| *o).collect()
+            );
         }
     }
 }
