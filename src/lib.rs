@@ -1,15 +1,19 @@
-#![cfg_attr(not(feature = "std"), no_std)]
+// (c) 2021 Alexader Gryaznov
+//
+//! Candle Auction implemented with Ink! smartcontract
 
+#![cfg_attr(not(feature = "std"), no_std)]
 use ink_lang as ink;
 
 #[ink::contract]
+/// Candle Auction module 
 mod candle_auction {
     use ink_storage::collections::HashMap as StorageHashMap;
     use ink_storage::Vec as StorageVec;
 
-    /// The error types.
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    /// Error types
     pub enum Error {
         /// Returned if bidding whilr auction isn't in active status
         AuctionNotActive,
@@ -21,8 +25,8 @@ mod candle_auction {
     }
     
 
-    /// Auction status
-    /// logic inspired by file:///home/greez/dev/polkadot/polkadot/doc/cargo-doc/src/polkadot_runtime_common/traits.rs.html#153
+    /// Auction statuses
+    /// logic inspired by [Parachain Auction](https://github.com/paritytech/polkadot/blob/master/runtime/common/src/traits.rs#L160)
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(::scale_info::TypeInfo))]
     pub enum AuctionStatus {
@@ -40,9 +44,7 @@ mod candle_auction {
         // VrfDelay(BlockNumber),
     }
    
-    /// Defines the storage of your contract.
-    /// Add new fields to the below struct in order
-    /// to add new static storage fields to your contract.
+    /// Defines the storage of the contract.
     #[ink(storage)]
     pub struct CandleAuction {
         /// Stores a single `bool` value on the storage.
@@ -71,7 +73,7 @@ mod candle_auction {
 
     impl CandleAuction {
         /// Auction constructor.
-        /// initializes the start_block to next block (if not set).
+        /// Initializes the start_block to next block (if not set).
         #[ink(constructor)]
         pub fn new(start_block: Option<BlockNumber>, opening_period: BlockNumber, ending_period: BlockNumber) -> Self {
             let mut winning_data = StorageVec::<Option<(AccountId, Balance)>>::new();
@@ -175,7 +177,7 @@ mod candle_auction {
         }
     }
 
-    // Tests
+    /// Tests
     #[cfg(not(feature = "ink-experimental-engine"))]
     #[cfg(test)]
     mod tests {
@@ -188,10 +190,13 @@ mod candle_auction {
         where 
             T: ink_env::Environment,
         {
-            let mut block = ink_env::block_number::<T>().unwrap();
+            let mut block = ink_env::block_number::<T>();
             while block < n {
-                ink_env::test::advance_block::<T>().unwrap();
-                block = ink_env::block_number::<T>().unwrap();
+                match ink_env::test::advance_block::<T>() {
+                    Err(_) => {panic!("Cannot add blocks to test chain!")},
+                    Ok(_) => {block = ink_env::block_number::<T>()}
+
+                }
             }
         }
 
@@ -209,7 +214,6 @@ mod candle_auction {
             );
         }
 
-        /// We test if the constructor does its job.
         #[ink::test]
         fn new_works() {
             let candle_auction = CandleAuction::new(Some(10),5,10);
@@ -227,7 +231,7 @@ mod candle_auction {
 
         #[ink::test]
         fn auction_statuses_returned_correctly() {
-            // an auction with following picture:
+            // an auction with the following picture:
             //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
             //     | opening  |             ending    |     
             let candle_auction = CandleAuction::new(Some(2),4,7);
@@ -251,55 +255,36 @@ mod candle_auction {
         #[should_panic]
         fn cannot_bid_until_started() {
             // given
-            // Bob and his initial balance
-            // let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().bob;
-            // let bob_initial_bal = ink_env::test::get_account_balance::<ink_env::DefaultEnvironment>(bob);
+            // default account (Alice)
 
+            // when 
             // auction starts at block #5
             let mut auction = CandleAuction::new(Some(5),5,10);
 
-            // when 
-            // and Bob tries to make a bid before block #5
+            // and Alice tries to make a bid before block #5
             auction.bid();
 
             // then
             // contract should just panic after this line
-
-            // then 
-            // the bid is not counted
-            // assert!(auction.bids.is_empty());
-
-            // and Bob's money are not taken
-            // assert_eq!(ink_env::test::get_account_balance::<ink_env::DefaultEnvironment>(bob), bob_initial_bal);
         }
 
         #[ink::test]
         #[should_panic]
         fn cannot_bid_when_ended() {
             // given
-            // Bob and his initial balance
-            // let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().bob;
-            // let bob_initial_bal = ink_env::test::get_account_balance::<ink_env::DefaultEnvironment>(bob);
-
-            // auction starts at block #1 and ended after block #15
+            // default account (Alice)
+            // and auction starts at block #1 and ended after block #15
             let mut auction = CandleAuction::new(None,5,10);
 
             // when 
-            // Auction ended
+            // Auction is ended
             run_to_block::<Environment>(16);
 
-            // and Bob tries to make a bid before block #5
+            // and Alice tries to make a bid before block #5
             auction.bid();
 
             // then
             // contract should just panic after this line
-
-            // then 
-            // the bid is not counted
-            // assert!(auction.bids.is_empty());
-
-            // and Bob's money are not taken
-            // assert_eq!(ink_env::test::get_account_balance::<ink_env::DefaultEnvironment>(bob), bob_initial_bal);
         }
 
         #[ink::test]

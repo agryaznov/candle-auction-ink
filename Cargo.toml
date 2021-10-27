@@ -1,35 +1,35 @@
 [package]
 name = "candle_auction"
-version = "0.1.0"
-authors = ["[your_name] <[your_email]>"]
+version = "0.1.4"
+authors = ["agryaznov"]
 edition = "2018"
 resolver = "2"
 
 [dependencies.ink_primitives]
 version = "3.0.0-rc6"
-path = "../ink/crates/primitives"
-default-features = false 
+git = "https://github.com/paritytech/ink"
+default-features = false
 
 [dependencies.ink_metadata]
 version = "3.0.0-rc6"
-path = "../ink/crates/metadata"
+git = "https://github.com/paritytech/ink"
 default-features = false
 features = ["derive"]
 optional = true
 
 [dependencies.ink_env]
 version = "3.0.0-rc6"
-path = "../ink/crates/env"
+git = "https://github.com/paritytech/ink"
 default-features = false
 
 [dependencies.ink_storage]
 version = "3.0.0-rc6"
-path = "../ink/crates/storage"
+git = "https://github.com/paritytech/ink"
 default-features = false
 
 [dependencies.ink_lang]
 version = "3.0.0-rc6"
-path = "../ink/crates/lang"
+git = "https://github.com/paritytech/ink"
 default-features = false
 
 [dependencies]
@@ -38,7 +38,7 @@ scale-info = { version = "1.0", default-features = false, features = ["derive"],
 
 [lib]
 name = "candle_auction"
-path = "lib.rs"
+path = "src/lib.rs"
 crate-type = [
 	# Used for normal contract Wasm blobs.
 	"cdylib",
@@ -55,5 +55,4 @@ std = [
     "scale-info/std",
 ]
 ink-as-dependency = []
-ink-experimental-engine = ["ink_env/ink-experimental-engine"]
 
