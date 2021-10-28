@@ -57,10 +57,8 @@ mod candle_auction {
         /// We assume this period starts right after Opening perid ends.
         ending_period: BlockNumber,
         /// Bids storage: 
-        // / for each block during ending_period (aka sample) (outer hashmap), 
-        // / we store only one last (top) bid per user as a hashmap (account => amount) (inner hashmap)
-        // / (therefore it is also serves as users balances ledger)
-        // bids: StorageHashMap<BlockNumber, StorageHashMap<AccountId,Balance>>,
+        /// we store only one last (top) bid per user as a hashmap (account => amount) (inner hashmap)
+        /// (therefore it also serves as users balances ledger)
         bids: StorageHashMap<AccountId,Balance>,
         /// winner = current top bidder
         winner: Option<AccountId>,
