@@ -1,6 +1,6 @@
 [package]
 name = "candle_auction"
-version = "0.1.4"
+version = "0.1.5"
 authors = ["agryaznov"]
 edition = "2018"
 resolver = "2"

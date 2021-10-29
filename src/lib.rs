@@ -70,15 +70,20 @@ mod candle_auction {
     }
 
     impl CandleAuction {
-        /// Auction constructor.
-        /// Initializes the start_block to next block (if not set).
+        /// Auction constructor.  
+        /// Initializes the start_block to next block (if not set).  
+        /// If start_block is set, checks it is in the future (to prevent backdating).  
         #[ink(constructor)]
         pub fn new(start_block: Option<BlockNumber>, opening_period: BlockNumber, ending_period: BlockNumber) -> Self {
+            let now = Self::env().block_number();
+            let start_in = start_block.unwrap_or(now+1);
+            // Security check versus backdating
+            assert!(start_in > now, "Auction is allowed to be scheduled to future blocks only!");
+
             let mut winning_data = StorageVec::<Option<(AccountId, Balance)>>::new();
             (0..ending_period+1).for_each(|_| winning_data.push(None));
-
             Self { 
-                start_block: start_block.unwrap_or(Self::env().block_number() + 1),
+                start_block: start_in,
                 opening_period,
                 ending_period, 
                 bids: StorageHashMap::new(),
@@ -152,9 +157,9 @@ mod candle_auction {
             self.status(now)
         }
 
-        /// Message to place a bid
-        /// An account can bid by sending the lacking amount so that total amount she sent to this contract covers the bid
-        /// I any particual point of time, the user's top bid is equal to total balance she have sent to the contract
+        /// Message to place a bid.  
+        /// An account can bid by sending the lacking amount so that total amount she sent to this contract covers the bid.  
+        /// In any particual point of time, the user's top bid is equal to total balance she have sent to the contract.
         #[ink(message, payable)]
         pub fn bid(&mut self) {
             let now = self.env().block_number();
@@ -225,6 +230,13 @@ mod candle_auction {
             let candle_auction = CandleAuction::new(None,5,10);
             assert_eq!(candle_auction.start_block, 13);
             assert_eq!(candle_auction.get_status(), AuctionStatus::NotStarted);
+        }
+
+        #[ink::test]
+        #[should_panic]
+        fn cannot_init_backdated_auction() {
+            run_to_block::<Environment>(27);
+            CandleAuction::new(Some(1),10,20);
         }
 
         #[ink::test]
