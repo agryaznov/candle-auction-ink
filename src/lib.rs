@@ -10,6 +10,16 @@ use ink_lang as ink;
 mod candle_auction {
     use ink_storage::collections::HashMap as StorageHashMap;
     use ink_storage::Vec as StorageVec;
+    // use ink_storage::Lazy;
+    // use erc721::erc721::Erc721 as Erc721;
+    use ink_env::{
+        DefaultEnvironment,
+        call::{
+            ExecutionInput, 
+            Selector, 
+            build_call as build_call
+        }
+    };
 
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
@@ -68,6 +78,10 @@ mod candle_auction {
         /// 0-indexed value is winner for OpeningPeriod
         /// i-indexed value is winner for sample (block) #i of EndingPeriod
         winning_data: StorageVec<Option<(AccountId,Balance)>>,
+        /// ERC721 contract
+        // erc721: Lazy<Erc721>,
+        /// rewarding NFT contract
+        reward_contract_address: AccountId,
     }
 
     impl CandleAuction {
@@ -75,7 +89,17 @@ mod candle_auction {
         /// Initializes the start_block to next block (if not set).  
         /// If start_block is set, checks it is in the future (to prevent backdating).  
         #[ink(constructor)]
-        pub fn new(start_block: Option<BlockNumber>, opening_period: BlockNumber, ending_period: BlockNumber) -> Self {
+        pub fn new(
+            start_block: Option<BlockNumber>, 
+            opening_period: BlockNumber, 
+            ending_period: BlockNumber,
+            reward_contract_address: AccountId,
+        ) -> Self {
+            // TODO: problem: somehow contract should get ownership on the NFT token to this moment
+            // but how here in the contructor it's not yet even instantiated... 
+            // maybe it's not a problem, as bidders could check
+            // which tokens owned by the contract before they bid
+
             let now = Self::env().block_number();
             let start_in = start_block.unwrap_or(now+1);
             // Security check versus backdating
@@ -83,14 +107,16 @@ mod candle_auction {
 
             let mut winning_data = StorageVec::<Option<(AccountId, Balance)>>::new();
             (0..ending_period+1).for_each(|_| winning_data.push(None));
+
             Self { 
                 start_block: start_in,
                 opening_period,
-                ending_period, 
+                ending_period,
                 bids: StorageHashMap::new(),
                 winning: None,
-                winning_data
-             }
+                winning_data,
+                reward_contract_address,
+            }
         }
 
         /// Helper for getting auction status
@@ -150,11 +176,52 @@ mod candle_auction {
             }     
         }
 
+        /// Pluggable reward logic options.  
+        /// Get NFT (ERC721)
+        fn give_nft(&self) {
+            // our contract owns some ERC721
+            // it should be identified by address of that ERC721 contract  
+            // which hence should be passed to Auction constructor, aloing with NFT TokenId (auction subject)
+            // (and be corresponding ERC721 contract being found and linked to storage)
+            // once auction winner is determined, erc721::set_approval_for_all() message is to be called
+            // call Erc721::set_approval_for_all(Winner_account,TokenId) to approve transfer all NFT 
+            // tokens belonging to auction contract
+            // DESIGN DECISION: we use set_approval_for_all() instead of approve() for 
+            //  1. the sake of simplicity, no need to specify TokenID  
+            //     as we need to send this token to the contract anyway,  _ater_ instantiation 
+            //     but still _before_ auctions starts
+            //  2. this allows to set auction for collection of tokens instead of just for one thing
+            build_call::<DefaultEnvironment>()
+                .callee(self.reward_contract_address)
+                .gas_limit(5000)
+                .exec_input(
+                    ExecutionInput::new(Selector::new([0xFE, 0xED, 0xBA, 0xBE]))
+                        .push_arg(self.get_winner())
+                        .push_arg(true)
+                )
+                .returns::<()>()
+                .fire()
+                .unwrap();
+
+            // self.erc721::approve(to: WinnerAccountId, id: TokenId);
+        }
+        // / Withdraw all contract balance (Jack Pot!)
+        //fn jackpot() (TBD) 
+        // / Get other (e.g. controller) contract ownership
+        //fn controller() (TBD)
+        // / Get domain name (see dns contract)
+        //fn domain() (TBD)
+
         /// Message to get the status of the auction given the current block number.
         #[ink(message)]
     	pub fn get_status(&self) -> AuctionStatus {
             let now = self.env().block_number();
             self.status(now)
+        }
+
+        pub fn get_winner(&self) -> Option<AccountId> {
+            // temporary same as noncandle
+            self.get_noncandle_winner()
         }
 
         /// Message to get auction winner in noncandle fashion.  
@@ -185,6 +252,16 @@ mod candle_auction {
                     panic!("Auction's winning data corrupted!")
                 },
                 Ok(()) => {}
+            }
+        }
+
+        /// Message to claim payout.  
+        /// If called by winner, should execute reward logic.  
+        /// If called by any of other participants, should pay all their balances back.  
+        #[ink(message)]
+        pub fn payout(&mut self) {
+            if let Some(_winner) = self.get_winner() {
+                self.give_nft();
             }
         }
     }
