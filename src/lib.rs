@@ -60,8 +60,9 @@ mod candle_auction {
         /// we store only one last (top) bid per user as a hashmap (account => amount) (inner hashmap)
         /// (therefore it also serves as users balances ledger)
         bids: StorageHashMap<AccountId,Balance>,
-        /// winner = current top bidder
-        winner: Option<AccountId>,
+        /// *winning* <bidder> = current top bidder.  
+        /// Not to be confused with *winner* = bidder who finally won.   
+        winning: Option<AccountId>,
         /// WinningData = storage of winners per sample (block)
         /// it's a vector of optional (AccountId, Balance) tuples representing winner in block (sample) along with her bid
         /// 0-indexed value is winner for OpeningPeriod
@@ -87,7 +88,7 @@ mod candle_auction {
                 opening_period,
                 ending_period, 
                 bids: StorageHashMap::new(),
-                winner: None,
+                winning: None,
                 winning_data
              }
         }
@@ -131,19 +132,18 @@ mod candle_auction {
             }
 
             // do not accept bids lesser that current top bid
-            if let Some(winner) = self.winner {
-                let winners_balance = *self.bids.get(&winner).unwrap_or(&0);
-                if bid < winners_balance {
-                    return Err(Error::NotOutBidding(bid,winners_balance))
+            if let Some(winning) = self.winning {
+                let winning_balance = *self.bids.get(&winning).unwrap_or(&0);
+                if bid < winning_balance {
+                    return Err(Error::NotOutBidding(bid,winning_balance))
                 }
-                // assert!(bid > winners_balance, "You aren't outbidding {} with {}", bid, winners_balance);
             }
 
             // finally, accept bid
             self.bids.insert(bidder, bid);
-            self.winner = Some(bidder);
+            self.winning = Some(bidder);
             // and update winning_data
-            // for retrospective candle-fashioned winner detection
+            // for retrospective candle-fashioned winning bidder detection
             match self.winning_data.set(offset, Some((bidder,bid))) {
                 Err(ink_storage::collections::vec::IndexOutOfBounds) => Err(Error::WinningDataCorrupted),
                 Ok(_) => Ok(())
@@ -157,12 +157,14 @@ mod candle_auction {
             self.status(now)
         }
 
-        /// Message to get auction winner
-        pub fn get_winner(&self) -> Option<AccountId> {
-            // check that auction ended
-            assert_eq!(self.get_status(), AuctionStatus::Ended, "Auction is not ended!"); 
-            // return winner 
-            self.winner
+        /// Message to get auction winner in noncandle fashion.  
+        /// To avoid ambiguity, winner is determined once the auction ended.  
+        pub fn get_noncandle_winner(&self) -> Option<AccountId> {
+            if self.get_status() == AuctionStatus::Ended {
+                self.winning
+            } else {
+                None
+            }
         }
         /// Message to place a bid.  
         /// An account can bid by sending the lacking amount so that total amount she sent to this contract covers the bid.  
@@ -320,8 +322,8 @@ mod candle_auction {
             // then
             // bid is accepted
             assert_eq!(auction.bids.get(&alice),Some(&100));
-            // and Alice is current winner 
-            assert_eq!(auction.winner, Some(alice));
+            // and Alice is currently winning 
+            assert_eq!(auction.winning, Some(alice));
 
             // and
             // further Alice' bids are adding up to her balance
@@ -329,13 +331,12 @@ mod candle_auction {
             set_sender::<Environment>(alice,25);            
             auction.bid();
             assert_eq!(auction.bids.get(&alice),Some(&125));
-            // and Alice is still the winner 
-            assert_eq!(auction.winner, Some(alice));
+            // and Alice is still winning
+            assert_eq!(auction.winning, Some(alice));
         }
 
         #[ink::test]
-        #[should_panic]
-        fn no_winner_until_ended() {
+        fn no_noncandle_winner_until_ended() {
             // given
             // Alice and Bob 
             let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().alice;
@@ -355,11 +356,8 @@ mod candle_auction {
             auction.bid();
 
             // then 
-            // as Auction is not ended
-            assert_eq!(auction.get_status(), AuctionStatus::EndingPeriod(9));
-
-            // then getting winner fails with panic
-            auction.get_winner();
+            // no winner yet determined
+            assert_eq!(auction.get_noncandle_winner(), None);
         }
 
         #[ink::test]
@@ -387,7 +385,7 @@ mod candle_auction {
 
             // then 
             // Bob wins
-            assert_eq!(auction.get_winner(), Some(bob));
+            assert_eq!(auction.get_noncandle_winner(), Some(bob));
         }
 
         #[ink::test]
