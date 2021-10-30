@@ -157,6 +157,13 @@ mod candle_auction {
             self.status(now)
         }
 
+        /// Message to get auction winner
+        pub fn get_winner(&self) -> Option<AccountId> {
+            // check that auction ended
+            assert_eq!(self.get_status(), AuctionStatus::Ended, "Auction is not ended!"); 
+            // return winner 
+            self.winner
+        }
         /// Message to place a bid.  
         /// An account can bid by sending the lacking amount so that total amount she sent to this contract covers the bid.  
         /// In any particual point of time, the user's top bid is equal to total balance she have sent to the contract.
@@ -327,6 +334,35 @@ mod candle_auction {
         }
 
         #[ink::test]
+        #[should_panic]
+        fn no_winner_until_ended() {
+            // given
+            // Alice and Bob 
+            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().alice;
+            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().bob;
+            // and an auction
+            let mut auction = CandleAuction::new(None,5,10);
+            // when
+            // auction starts
+            run_to_block::<Environment>(1);
+            // Alice bids 100
+            set_sender::<Environment>(alice, 100);
+            auction.bid();
+
+            run_to_block::<Environment>(15);
+            // Bob bids 101
+            set_sender::<Environment>(bob, 101);
+            auction.bid();
+
+            // then 
+            // as Auction is not ended
+            assert_eq!(auction.get_status(), AuctionStatus::EndingPeriod(9));
+
+            // then getting winner fails with panic
+            auction.get_winner();
+        }
+
+        #[ink::test]
         fn noncandle_winner_determined() {
             // given
             // Alice and Bob 
@@ -341,13 +377,17 @@ mod candle_auction {
             set_sender::<Environment>(alice, 100);
             auction.bid();
 
+            run_to_block::<Environment>(15);
             // Bob bids 101
             set_sender::<Environment>(bob, 101);
             auction.bid();
 
+            // Auction ends
+            run_to_block::<Environment>(17);
+
             // then 
             // Bob wins
-            assert_eq!(auction.winner, Some(bob));
+            assert_eq!(auction.get_winner(), Some(bob));
         }
 
         #[ink::test]
@@ -412,5 +452,7 @@ mod candle_auction {
                     .iter().map(|o| *o).collect()
             );
         }
+
+        
     }
 }
