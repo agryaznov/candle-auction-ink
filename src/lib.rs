@@ -32,6 +32,8 @@ mod candle_auction {
         NotOutBidding(Balance,Balance),
         /// Problems with winning_data observed
         WinningDataCorrupted,
+        /// Payout transaction failed
+        PayoutFailed,
     }
     
 
@@ -54,6 +56,13 @@ mod candle_auction {
         // VrfDelay(BlockNumber),
     }
    
+    /// Event emitted when a nft_payout happened.
+    #[ink(event)]
+    pub struct PayoutNFT {
+        #[ink(topic)]
+        to: Option<AccountId>,
+    }
+    
     /// Defines the storage of the contract.
     #[ink(storage)]
     pub struct CandleAuction {
@@ -178,7 +187,8 @@ mod candle_auction {
 
         /// Pluggable reward logic options.  
         /// Get NFT (ERC721)
-        fn give_nft(&self) {
+        #[ink(message)]
+        pub fn give_nft(&self) -> Result<(), Error> {
             // our contract owns some ERC721
             // it should be identified by address of that ERC721 contract  
             // which hence should be passed to Auction constructor, aloing with NFT TokenId (auction subject)
@@ -191,18 +201,39 @@ mod candle_auction {
             //     as we need to send this token to the contract anyway,  _ater_ instantiation 
             //     but still _before_ auctions starts
             //  2. this allows to set auction for collection of tokens instead of just for one thing
-            build_call::<DefaultEnvironment>()
-                .callee(self.reward_contract_address)
-                .gas_limit(5000)
-                .exec_input(
-                    ExecutionInput::new(Selector::new([0xFE, 0xED, 0xBA, 0xBE]))
-                        .push_arg(self.get_winner())
-                        .push_arg(true)
-                )
-                .returns::<()>()
-                .fire()
-                .unwrap();
-
+            const SELECTOR: [u8; 4] = [0xFE, 0xED, 0xBA, 0xBE];
+            if let Some(winner) = Some(Self::env().caller()) {
+                match build_call::<DefaultEnvironment>()
+                    .callee(self.reward_contract_address)
+                    .gas_limit(100000)
+                    .exec_input(
+                        ExecutionInput::new(Selector::new(SELECTOR))
+                            .push_arg(winner)
+                            .push_arg(true)
+                    )
+                    .returns::<()>()
+                    .fire() {
+                        Ok(()) => { 
+                            self.env().emit_event(PayoutNFT {
+                                to: Some(winner),
+                            }); 
+                            Ok(())
+                        }, 
+                        Err(Error) => {
+                            ink_env::debug_println!("ASSSHOOOLE!{:?}", Error);
+                            ink_env::debug_println!("contract fucking blah: {:?}", self.reward_contract_address);
+                            ink_env::debug_println!("winner fucking blah: {:?}", winner);
+                            
+                            self.env().emit_event(PayoutNFT {
+                                // to: Some(winner),
+                                to: Some(AccountId::from([0x0; 32])),
+                            });
+                            Err(Error::PayoutFailed)
+                       }
+                    }
+                } else {
+                    panic!("NO WINNER!");
+                }
             // self.erc721::approve(to: WinnerAccountId, id: TokenId);
         }
         // / Withdraw all contract balance (Jack Pot!)
@@ -219,6 +250,7 @@ mod candle_auction {
             self.status(now)
         }
 
+        #[ink(message)]
         pub fn get_winner(&self) -> Option<AccountId> {
             // temporary same as noncandle
             self.get_noncandle_winner()
@@ -250,6 +282,9 @@ mod candle_auction {
                 },
                 Err(Error::WinningDataCorrupted) => {
                     panic!("Auction's winning data corrupted!")
+                },
+                Err(_) => {
+                    panic!("Unexpected Error")
                 },
                 Ok(()) => {}
             }
@@ -301,6 +336,11 @@ mod candle_auction {
                 amount, 
                 ink_env::test::CallData::new(ink_env::call::Selector::new([0x00; 4])), /* dummy */
             );
+        }
+
+        #[ink::test]
+        fn nft_pays_out() {
+            assert!(false)
         }
 
         #[ink::test]
