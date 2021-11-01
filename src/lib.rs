@@ -13,13 +13,14 @@ mod candle_auction {
     // use ink_storage::Lazy;
     // use erc721::erc721::Erc721 as Erc721;
     use ink_env::{
-        DefaultEnvironment,
         call::{
             ExecutionInput, 
             Selector, 
-            build_call as build_call
+            build_call as build_call,
+            utils::ReturnType
         }
     };
+    use ink_prelude::vec::Vec;
 
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
@@ -188,7 +189,7 @@ mod candle_auction {
         /// Pluggable reward logic options.  
         /// Get NFT (ERC721)
         #[ink(message)]
-        pub fn give_nft(&self) -> Result<(), Error> {
+        pub fn give_nft(&self)  {
             // our contract owns some ERC721
             // it should be identified by address of that ERC721 contract  
             // which hence should be passed to Auction constructor, aloing with NFT TokenId (auction subject)
@@ -202,38 +203,90 @@ mod candle_auction {
             //     but still _before_ auctions starts
             //  2. this allows to set auction for collection of tokens instead of just for one thing
             const SELECTOR: [u8; 4] = [0xFE, 0xED, 0xBA, 0xBE];
-            if let Some(winner) = Some(Self::env().caller()) {
-                match build_call::<DefaultEnvironment>()
-                    .callee(self.reward_contract_address)
-                    .gas_limit(100000)
-                    .exec_input(
-                        ExecutionInput::new(Selector::new(SELECTOR))
-                            .push_arg(winner)
-                            .push_arg(true)
-                    )
-                    .returns::<()>()
-                    .fire() {
-                        Ok(()) => { 
-                            self.env().emit_event(PayoutNFT {
-                                to: Some(winner),
-                            }); 
-                            Ok(())
-                        }, 
-                        Err(Error) => {
-                            ink_env::debug_println!("ASSSHOOOLE!{:?}", Error);
-                            ink_env::debug_println!("contract fucking blah: {:?}", self.reward_contract_address);
-                            ink_env::debug_println!("winner fucking blah: {:?}", winner);
-                            
-                            self.env().emit_event(PayoutNFT {
-                                // to: Some(winner),
-                                to: Some(AccountId::from([0x0; 32])),
-                            });
-                            Err(Error::PayoutFailed)
-                       }
-                    }
-                } else {
-                    panic!("NO WINNER!");
+            let selector = Selector::new(SELECTOR);
+            let winner = self.env().caller();
+            let params = build_call::<Environment>()
+            .callee(self.reward_contract_address)
+            .gas_limit(50000)
+            .exec_input(
+                ExecutionInput::new(selector)
+                    .push_arg(13u32)
+                    // .push_arg(winner)
+                    // .push_arg(true)
+            )
+            .returns::<ReturnType<Result<(), Error>>>()
+            .params();
+
+            match ink_env::eval_contract(&params) {
+                Ok(v) => {
+                    ink_env::debug_println!(
+                        "Received return value \"{:?}\" from contract {:?}",
+                        v,
+                        self.reward_contract_address
+                    );
                 }
+                Err(e) => {
+                    match e {
+                        ink_env::Error::CodeNotFound
+                        | ink_env::Error::NotCallable => {
+                            // Our recipient wasn't a smart contract, so there's nothing more for
+                            // us to do
+                            ink_env::debug_println!(
+                                "Recipient at {:#04X?} from is not a smart contract ({:?})", 
+                                self.reward_contract_address, 
+                                e
+                            );
+                        }
+                        _ => {
+                            // We got some sort of error from the call to our recipient smart
+                            // contract, and as such we must revert this call
+                            let msg = ink_prelude::format!(
+                                "Got error \"{:?}\" while trying to call {:?} with SELECTOR: {:?}",
+                                e,
+                                self.reward_contract_address,
+                                selector.to_bytes()
+                            
+                            );
+                            ink_env::debug_println!("{}", &msg);
+                            panic!("{}", &msg)
+                        }
+                    }
+                }
+            }
+
+            // // del 
+            // if let Some(winner) = Some(Self::env().caller()) {
+            //     match build_call::<Environment>()
+            //         .callee(self.reward_contract_address)
+            //         .gas_limit(100000)
+            //         .exec_input(
+            //             ExecutionInput::new(Selector::new(SELECTOR))
+            //                 .push_arg(winner)
+            //                 .push_arg(true)
+            //         )
+            //         .returns::<()>()
+            //         .fire() {
+            //             Ok(()) => { 
+            //                 self.env().emit_event(PayoutNFT {
+            //                     to: Some(winner),
+            //                 }); 
+            //                 Ok(())
+            //             }, 
+            //             Err(Error) => {
+            //                 ink_env::debug_println!("ASSSHOOOLE!{:?}", Error);
+            //                 ink_env::debug_println!("contract fucking blah: {:?}", self.reward_contract_address);
+            //                 ink_env::debug_println!("winner fucking blah: {:?}", winner);
+                            
+            //                 self.env().emit_event(PayoutNFT {
+            //                     // to: Some(winner),
+            //                     to: Some(AccountId::from([0x0; 32])),
+            //                 });
+            //                 Err(Error::PayoutFailed)
+            //            }
+            //         }
+            //     } else {
+            //         panic!("NO WINNER!");
+            //     }
             // self.erc721::approve(to: WinnerAccountId, id: TokenId);
         }
         // / Withdraw all contract balance (Jack Pot!)
