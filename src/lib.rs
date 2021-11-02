@@ -10,8 +10,6 @@ use ink_lang as ink;
 mod candle_auction {
     use ink_storage::collections::HashMap as StorageHashMap;
     use ink_storage::Vec as StorageVec;
-    // use ink_storage::Lazy;
-    // use erc721::erc721::Erc721 as Erc721;
     use ink_env::{
         call::{
             ExecutionInput, 
@@ -20,7 +18,6 @@ mod candle_auction {
             utils::ReturnType
         }
     };
-    use ink_prelude::vec::Vec;
     
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
@@ -33,8 +30,6 @@ mod candle_auction {
         NotOutBidding(Balance,Balance),
         /// Problems with winning_data observed
         WinningDataCorrupted,
-        /// Payout transaction failed
-        PayoutFailed,
     }
     
 
@@ -186,43 +181,25 @@ mod candle_auction {
             }     
         }
 
-        /// Pluggable reward logic options.  
-        /// Get NFT (ERC721)
-        #[ink(message)]
-        pub fn give_nft(&self) -> Result<(), Error> {
-            // our contract owns some ERC721 tokens  
-            // it should be identified by address of that ERC721 contract  
-            // which hence should be passed to Auction constructor, aloing with NFT TokenId (auction subject)
-            // (and be corresponding ERC721 contract being found and linked to storage)
-            // once auction winner is determined, erc721::set_approval_for_all() message is to be called
-            // call Erc721::set_approval_for_all(Winner_account,TokenId) to approve transfer all NFT 
-            // tokens belonging to auction contract
-            // DESIGN DECISION: we use set_approval_for_all() instead of approve() for 
-            //  1. the sake of simplicity, no need to specify TokenID  
-            //     as we need to send this token to the contract anyway,  _ater_ instantiation 
-            //     but still _before_ auctions starts
-            //  2. this allows to set auction for collection of tokens instead of just for one thing
-            use scale::Encode;
-
-            const SELECTOR: [u8; 4] = [0xFE, 0xED, 0xBA, 0xBE];
-            let selector = Selector::new(SELECTOR);
-            let winner = self.env().caller();
-            let to = self.reward_contract_address; 
+        /// Cross conract call to ERC721 set_approval_for_all() method  
+        /// which is expected to have the selector: 0xFEEDBABE   
+        fn set_approval_for_all(&self, to: AccountId) -> Result<(), ink_env::Error>  {
+            let selector = Selector::new([0xFE, 0xED, 0xBA, 0xBE]);
             let params = build_call::<Environment>()
-            .callee(to)
-            .exec_input(
-                ExecutionInput::new(selector)
-                    .push_arg(winner)
-                    .push_arg(true)
-            )
-            .returns::<ReturnType<Result<(), Error>>>();
+                            .callee(self.reward_contract_address)
+                            .exec_input(
+                                ExecutionInput::new(selector)
+                                    .push_arg(to)
+                                    .push_arg(true)
+                            )
+                            .returns::<ReturnType<Result<(), Error>>>();
 
             match params.fire() {
                 Ok(v) => {
                     ink_env::debug_println!(
                         "Received return value \"{:?}\" from contract {:?}",
                         v,
-                        to
+                        self.reward_contract_address
                     );
                     Ok(())
                 }
@@ -234,10 +211,10 @@ mod candle_auction {
                             // us to do
                             ink_env::debug_println!(
                                 "Recipient at {:#04X?} from is not a smart contract ({:?})", 
-                                to, 
+                                self.reward_contract_address, 
                                 e
                             );
-                            Err(Error::PayoutFailed)
+                            Err(e)
                         }
                         _ => {
                             // We got some sort of error from the call to our recipient smart
@@ -245,15 +222,41 @@ mod candle_auction {
                             let msg = ink_prelude::format!(
                                 "Got error \"{:?}\" while trying to call {:?} with SELECTOR: {:?}",
                                 e,
-                                to,
+                                self.reward_contract_address, 
                                 selector.to_bytes()
                             
                             );
                             ink_env::debug_println!("{}", &msg);
-                            panic!("{}", &msg)
+                            Err(e)
                         }
                     }
                 }
+            }
+        }
+
+        /// Pluggable reward logic: OPTION-1.    
+        /// Reward with NFT(s) (ERC721).  
+        /// Contract rewards auction winner by giving her approval to transfer 
+        /// ERC721 tokens on behalf of the auction contract.  
+        ///
+        /// DESIGN DECISION: we call ERC721 set_approval_for_all() instead of approve() for  
+        ///  1. the sake of simplicity, no need to specify TokenID  
+        ///     as we need to send this token to the contract anyway,  _ater_ instantiation 
+        ///     but still _before_ auctions starts
+        ///  2. this allows to set auction for collection of tokens instead of just for one thing
+        /// 
+        /// This message can be invoked by anyone to pay the reward.  
+        /// Still only the winner gets the reward as the result.  
+        #[ink(message)]
+        pub fn give_nft(&self) {
+            // check there is a winner
+            let winner = self.get_winner().expect("No winner so far!");
+
+            match self.set_approval_for_all(winner) {
+                Ok(()) => {},
+                Err(e) => {
+                            panic!("{:?}", &e)
+                          }
             }
         }
         // / Withdraw all contract balance (Jack Pot!)
@@ -298,13 +301,10 @@ mod candle_auction {
                     panic!("Auction isn't active!")
                 },
                 Err(Error::NotOutBidding(bid_new,bid_quo)) => {
-                    panic!("You can't outbid {} with {}", bid_new, bid_quo)
+                    panic!("You can't outbid {} with {}", bid_quo, bid_new)
                 },
                 Err(Error::WinningDataCorrupted) => {
                     panic!("Auction's winning data corrupted!")
-                },
-                Err(_) => {
-                    panic!("Unexpected Error")
                 },
                 Ok(()) => {}
             }
