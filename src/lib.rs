@@ -212,9 +212,8 @@ mod candle_auction {
             .callee(to)
             .exec_input(
                 ExecutionInput::new(selector)
-                    .push_arg(13u32)
-                    // .push_arg(winner)
-                    // .push_arg(true)
+                    .push_arg(winner)
+                    .push_arg(true)
             )
             .returns::<ReturnType<Result<(), Error>>>();
 
@@ -256,41 +255,6 @@ mod candle_auction {
                     }
                 }
             }
-
-            // // del 
-            // if let Some(winner) = Some(Self::env().caller()) {
-            //     match build_call::<Environment>()
-            //         .callee(self.reward_contract_address)
-            //         .gas_limit(100000)
-            //         .exec_input(
-            //             ExecutionInput::new(Selector::new(SELECTOR))
-            //                 .push_arg(winner)
-            //                 .push_arg(true)
-            //         )
-            //         .returns::<()>()
-            //         .fire() {
-            //             Ok(()) => { 
-            //                 self.env().emit_event(PayoutNFT {
-            //                     to: Some(winner),
-            //                 }); 
-            //                 Ok(())
-            //             }, 
-            //             Err(Error) => {
-            //                 ink_env::debug_println!("ASSSHOOOLE!{:?}", Error);
-            //                 ink_env::debug_println!("contract fucking blah: {:?}", self.reward_contract_address);
-            //                 ink_env::debug_println!("winner fucking blah: {:?}", winner);
-                            
-            //                 self.env().emit_event(PayoutNFT {
-            //                     // to: Some(winner),
-            //                     to: Some(AccountId::from([0x0; 32])),
-            //                 });
-            //                 Err(Error::PayoutFailed)
-            //            }
-            //         }
-            //     } else {
-            //         panic!("NO WINNER!");
-            //     }
-            // self.erc721::approve(to: WinnerAccountId, id: TokenId);
         }
         // / Withdraw all contract balance (Jack Pot!)
         //fn jackpot() (TBD) 
