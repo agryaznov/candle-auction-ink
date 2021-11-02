@@ -213,7 +213,7 @@ mod candle_auction {
             .gas_limit(50000)
             .exec_input(
                 ExecutionInput::new(selector)
-                    .push_arg(13u32)
+                    // .push_arg(13u32)
                     // .push_arg(winner)
                     // .push_arg(true)
             )
@@ -221,48 +221,48 @@ mod candle_auction {
 
             ink_env::debug_println!(
                 "PARAMS: {:x?}", 
-                ExecutionInput::new(selector)
-                .push_arg(13u32).encode()
+                ExecutionInput::new(selector).encode()
+                // .push_arg(13u32).encode()
             );
-            panic!("STOP");
-            // match params.fire() {
-            //     Ok(v) => {
-            //         ink_env::debug_println!(
-            //             "Received return value \"{:?}\" from contract {:?}",
-            //             v,
-            //             to
-            //         );
-            //         Ok(())
-            //     }
-            //     Err(e) => {
-            //         match e {
-            //             ink_env::Error::CodeNotFound
-            //             | ink_env::Error::NotCallable => {
-            //                 // Our recipient wasn't a smart contract, so there's nothing more for
-            //                 // us to do
-            //                 ink_env::debug_println!(
-            //                     "Recipient at {:#04X?} from is not a smart contract ({:?})", 
-            //                     to, 
-            //                     e
-            //                 );
-            //                 Err(Error::PayoutFailed)
-            //             }
-            //             _ => {
-            //                 // We got some sort of error from the call to our recipient smart
-            //                 // contract, and as such we must revert this call
-            //                 let msg = ink_prelude::format!(
-            //                     "Got error \"{:?}\" while trying to call {:?} with SELECTOR: {:?}",
-            //                     e,
-            //                     to,
-            //                     selector.to_bytes()
+            // panic!("STOP");
+            match params.fire() {
+                Ok(v) => {
+                    ink_env::debug_println!(
+                        "Received return value \"{:?}\" from contract {:?}",
+                        v,
+                        to
+                    );
+                    Ok(())
+                }
+                Err(e) => {
+                    match e {
+                        ink_env::Error::CodeNotFound
+                        | ink_env::Error::NotCallable => {
+                            // Our recipient wasn't a smart contract, so there's nothing more for
+                            // us to do
+                            ink_env::debug_println!(
+                                "Recipient at {:#04X?} from is not a smart contract ({:?})", 
+                                to, 
+                                e
+                            );
+                            Err(Error::PayoutFailed)
+                        }
+                        _ => {
+                            // We got some sort of error from the call to our recipient smart
+                            // contract, and as such we must revert this call
+                            let msg = ink_prelude::format!(
+                                "Got error \"{:?}\" while trying to call {:?} with SELECTOR: {:?}",
+                                e,
+                                to,
+                                selector.to_bytes()
                             
-            //                 );
-            //                 ink_env::debug_println!("{}", &msg);
-            //                 panic!("{}", &msg)
-            //             }
-            //         }
-            //     }
-            // }
+                            );
+                            ink_env::debug_println!("{}", &msg);
+                            panic!("{}", &msg)
+                        }
+                    }
+                }
+            }
 
             // // del 
             // if let Some(winner) = Some(Self::env().caller()) {
