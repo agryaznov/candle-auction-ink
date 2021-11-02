@@ -21,7 +21,7 @@ mod candle_auction {
         }
     };
     use ink_prelude::vec::Vec;
-
+    
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     /// Error types
@@ -189,7 +189,7 @@ mod candle_auction {
         /// Pluggable reward logic options.  
         /// Get NFT (ERC721)
         #[ink(message)]
-        pub fn give_nft(&self)  {
+        pub fn give_nft(&self) -> Result<(), Error> {
             // our contract owns some ERC721
             // it should be identified by address of that ERC721 contract  
             // which hence should be passed to Auction constructor, aloing with NFT TokenId (auction subject)
@@ -202,11 +202,14 @@ mod candle_auction {
             //     as we need to send this token to the contract anyway,  _ater_ instantiation 
             //     but still _before_ auctions starts
             //  2. this allows to set auction for collection of tokens instead of just for one thing
+            use scale::Encode;
+
             const SELECTOR: [u8; 4] = [0xFE, 0xED, 0xBA, 0xBE];
             let selector = Selector::new(SELECTOR);
             let winner = self.env().caller();
+            let to = self.reward_contract_address; 
             let params = build_call::<Environment>()
-            .callee(self.reward_contract_address)
+            .callee(to)
             .gas_limit(50000)
             .exec_input(
                 ExecutionInput::new(selector)
@@ -214,45 +217,52 @@ mod candle_auction {
                     // .push_arg(winner)
                     // .push_arg(true)
             )
-            .returns::<ReturnType<Result<(), Error>>>()
-            .params();
+            .returns::<ReturnType<Result<(), Error>>>();
 
-            match ink_env::eval_contract(&params) {
-                Ok(v) => {
-                    ink_env::debug_println!(
-                        "Received return value \"{:?}\" from contract {:?}",
-                        v,
-                        self.reward_contract_address
-                    );
-                }
-                Err(e) => {
-                    match e {
-                        ink_env::Error::CodeNotFound
-                        | ink_env::Error::NotCallable => {
-                            // Our recipient wasn't a smart contract, so there's nothing more for
-                            // us to do
-                            ink_env::debug_println!(
-                                "Recipient at {:#04X?} from is not a smart contract ({:?})", 
-                                self.reward_contract_address, 
-                                e
-                            );
-                        }
-                        _ => {
-                            // We got some sort of error from the call to our recipient smart
-                            // contract, and as such we must revert this call
-                            let msg = ink_prelude::format!(
-                                "Got error \"{:?}\" while trying to call {:?} with SELECTOR: {:?}",
-                                e,
-                                self.reward_contract_address,
-                                selector.to_bytes()
+            ink_env::debug_println!(
+                "PARAMS: {:x?}", 
+                ExecutionInput::new(selector)
+                .push_arg(13u32).encode()
+            );
+            panic!("STOP");
+            // match params.fire() {
+            //     Ok(v) => {
+            //         ink_env::debug_println!(
+            //             "Received return value \"{:?}\" from contract {:?}",
+            //             v,
+            //             to
+            //         );
+            //         Ok(())
+            //     }
+            //     Err(e) => {
+            //         match e {
+            //             ink_env::Error::CodeNotFound
+            //             | ink_env::Error::NotCallable => {
+            //                 // Our recipient wasn't a smart contract, so there's nothing more for
+            //                 // us to do
+            //                 ink_env::debug_println!(
+            //                     "Recipient at {:#04X?} from is not a smart contract ({:?})", 
+            //                     to, 
+            //                     e
+            //                 );
+            //                 Err(Error::PayoutFailed)
+            //             }
+            //             _ => {
+            //                 // We got some sort of error from the call to our recipient smart
+            //                 // contract, and as such we must revert this call
+            //                 let msg = ink_prelude::format!(
+            //                     "Got error \"{:?}\" while trying to call {:?} with SELECTOR: {:?}",
+            //                     e,
+            //                     to,
+            //                     selector.to_bytes()
                             
-                            );
-                            ink_env::debug_println!("{}", &msg);
-                            panic!("{}", &msg)
-                        }
-                    }
-                }
-            }
+            //                 );
+            //                 ink_env::debug_println!("{}", &msg);
+            //                 panic!("{}", &msg)
+            //             }
+            //         }
+            //     }
+            // }
 
             // // del 
             // if let Some(winner) = Some(Self::env().caller()) {
