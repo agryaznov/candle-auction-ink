@@ -190,7 +190,7 @@ mod candle_auction {
         /// Get NFT (ERC721)
         #[ink(message)]
         pub fn give_nft(&self) -> Result<(), Error> {
-            // our contract owns some ERC721
+            // our contract owns some ERC721 tokens  
             // it should be identified by address of that ERC721 contract  
             // which hence should be passed to Auction constructor, aloing with NFT TokenId (auction subject)
             // (and be corresponding ERC721 contract being found and linked to storage)
@@ -210,21 +210,14 @@ mod candle_auction {
             let to = self.reward_contract_address; 
             let params = build_call::<Environment>()
             .callee(to)
-            .gas_limit(50000)
             .exec_input(
                 ExecutionInput::new(selector)
-                    // .push_arg(13u32)
+                    .push_arg(13u32)
                     // .push_arg(winner)
                     // .push_arg(true)
             )
             .returns::<ReturnType<Result<(), Error>>>();
 
-            ink_env::debug_println!(
-                "PARAMS: {:x?}", 
-                ExecutionInput::new(selector).encode()
-                // .push_arg(13u32).encode()
-            );
-            // panic!("STOP");
             match params.fire() {
                 Ok(v) => {
                     ink_env::debug_println!(
