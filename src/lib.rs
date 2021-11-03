@@ -16,7 +16,8 @@ mod candle_auction {
             Selector, 
             build_call as build_call,
             utils::ReturnType
-        }
+        },
+        transfer
     };
     
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
@@ -183,7 +184,7 @@ mod candle_auction {
 
         /// Cross conract call to ERC721 set_approval_for_all() method  
         /// which is expected to have the selector: 0xFEEDBABE   
-        fn set_approval_for_all(&self, to: AccountId) -> Result<(), ink_env::Error>  {
+        fn approve_nfts(&self, to: AccountId) -> Result<(), ink_env::Error>  {
             let selector = Selector::new([0xFE, 0xED, 0xBA, 0xBE]);
             let params = build_call::<Environment>()
                             .callee(self.reward_contract_address)
@@ -234,6 +235,28 @@ mod candle_auction {
             }
         }
 
+        /// Pay back looser bids
+        fn pay_back(&mut self) {
+            // should exec only on Ended auction 
+            assert_eq!(self.get_status(), AuctionStatus::Ended, "Auction is not Ended, no payback is possible!");
+
+            // remove winner balance from ledger: it's not her money anymore
+            if let Some(winner) = self.get_winner() {
+                self.bids.take(&winner);
+            }
+
+            // TODO: 
+            // 1. benchmark vs non-storage-modification version
+            // 2. benchmark single tx vs bulk vs (should the caller pay gas for others?)
+            //
+            // iterate over loosers and pay each balance back
+            for (acc,bal) in self.bids.iter_mut() {
+                // remove ledger record
+                // and pay  
+                // TODO: zero-check
+                transfer::<Environment>(*acc,*bal).unwrap();
+            }
+        }
         /// Pluggable reward logic: OPTION-1.    
         /// Reward with NFT(s) (ERC721).  
         /// Contract rewards auction winner by giving her approval to transfer 
@@ -252,7 +275,7 @@ mod candle_auction {
             // check there is a winner
             let winner = self.get_winner().expect("No winner so far!");
 
-            match self.set_approval_for_all(winner) {
+            match self.approve_nfts(winner) {
                 Ok(()) => {},
                 Err(e) => {
                             panic!("{:?}", &e)
@@ -310,14 +333,20 @@ mod candle_auction {
             }
         }
 
-        /// Message to claim payout.  
-        /// If called by winner, should execute reward logic.  
-        /// If called by any of other participants, should pay all their balances back.  
+        /// Message to claim the payouts.  
+        /// Reward the winner  
+        /// and pay all others balances back.  
         #[ink(message)]
         pub fn payout(&mut self) {
+            // pay back to loosers
+            self.pay_back();
+
+            // Give the winner approval to transfer NFT(s)
             if let Some(_winner) = self.get_winner() {
                 self.give_nft();
             }
+
+            // TODO: get contract owner right to take all money left   
         }
     }
 
@@ -329,6 +358,8 @@ mod candle_auction {
         use super::*;
         /// Imports `ink_lang` so we can use `#[ink::test]`.
         use ink_lang as ink;
+        use ink_env::test::get_account_balance as user_balance;
+        use ink_env::balance as contract_balance;
 
         const DEFAULT_CALLEE_HASH: [u8; 32] = [0x07; 32];
 
@@ -522,34 +553,6 @@ mod candle_auction {
         }
 
         #[ink::test]
-        fn noncandle_winner_determined() {
-            // given
-            // Alice and Bob 
-            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().alice;
-            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().bob;
-            // and an auction
-            let mut auction = CandleAuction::new(None,5,10,AccountId::from(DEFAULT_CALLEE_HASH));
-            // when
-            // auction starts
-            run_to_block::<Environment>(1);
-            // Alice bids 100
-            set_sender::<Environment>(alice, 100);
-            auction.bid();
-
-            run_to_block::<Environment>(15);
-            // Bob bids 101
-            set_sender::<Environment>(bob, 101);
-            auction.bid();
-
-            // Auction ends
-            run_to_block::<Environment>(17);
-
-            // then 
-            // Bob wins
-            assert_eq!(auction.get_noncandle_winner(), Some(bob));
-        }
-
-        #[ink::test]
         fn winning_data_constructed_correctly() {
             // given
             // an auction with the following structure:
@@ -612,6 +615,64 @@ mod candle_auction {
             );
         }
 
+        #[ink::test]
+        fn noncandle_win_and_payout_work() {
+            // given
+            // Alice and Bob 
+            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().alice;
+            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().bob;
+            // and an auction
+            let mut auction = CandleAuction::new(None,5,10,AccountId::from(DEFAULT_CALLEE_HASH));
+            // when
+            // auction starts
+            run_to_block::<Environment>(1);
+            // Alice bids 100
+            set_sender::<Environment>(alice, 100);
+            auction.bid();
+
+            run_to_block::<Environment>(15);
+            // Bob bids 101
+            set_sender::<Environment>(bob, 101);
+            auction.bid();
+
+            // Auction ends 
+            run_to_block::<Environment>(17);
+
+            // Bob wins (with bid 101) 
+            assert_eq!(auction.get_noncandle_winner(), Some(bob));
+
+            // balances: [alice's, bob's, contract's]
+            let balances_before = [
+                            user_balance::<Environment>(alice).unwrap(), 
+                            user_balance::<Environment>(bob).unwrap(), 
+                            contract_balance::<Environment>()
+                        ];
+
+            // Alice claims payout 
+            set_sender::<Environment>(alice, 0);
+            auction.payout();
+
+            let balances_after = [
+                            user_balance::<Environment>(alice).unwrap(), 
+                            user_balance::<Environment>(bob).unwrap(), 
+                            contract_balance::<Environment>()
+                        ];
+
+            let mut balances_diff = [0; 3];
+            for i in 0..3 {
+                balances_diff[i] = balances_before[i] - balances_after[i];
+            }
+            // then
+            // Bob as winner gets no money back
+            // Alice gets back her bidded amount
+            // Contract gets Bob's bidded amount
+            assert_eq!(balances_diff,[0, 100, 101]);
+            // Alice as looser gives her bidded money back
+
+            
+            // Contract ledger cleared
+
+        }
         
     }
 }
