@@ -181,9 +181,46 @@ mod candle_auction {
             }     
         }
 
+        /// Pay back.
+        /// Winner gets her reward.
+        /// Losser get his balance back.  
+        fn pay_back(&mut self, reward: fn(&Self, to: AccountId) -> (), to: AccountId) {
+            // should be executed only on Ended auction 
+            assert_eq!(self.get_status(), AuctionStatus::Ended, "Auction is not Ended, no payback is possible!");
+
+            if let Some(winner) = self.get_winner() {
+                // winner gets her reward
+                if to == winner {
+                    // remove winner balance from ledger: it's not her money anymore
+                    self.balances.take(&winner);
+                    reward(&self, to);
+                    return
+                }
+            }
+            
+            // pay the looser his bidded amount back
+            let bal = self.balances.take(&to).unwrap();
+            // zero-balance check: bid 0 is possible, but nothing to pay back
+            if bal > 0 {
+                    // and pay  
+                    transfer::<Environment>(to,bal).unwrap();
+                }
+        }
+
+        /// Pluggable reward logic: OPTION-1.    
+        /// Reward with NFT(s) (ERC721).  
+        /// Contract rewards auction winner by giving her approval to transfer 
+        /// ERC721 tokens on behalf of the auction contract.  
+        ///
+        /// DESIGN DECISION: we call ERC721 set_approval_for_all() instead of approve() for  
+        ///  1. the sake of simplicity, no need to specify TokenID  
+        ///     as we need to send this token to the contract anyway,  _ater_ instantiation 
+        ///     but still _before_ auctions starts
+        ///  2. this allows to set auction for collection of tokens instead of just for one thing
+        ///
         /// Cross conract call to ERC721 set_approval_for_all() method  
         /// which is expected to have the selector: 0xFEEDBABE   
-        fn approve_nfts(&self, to: AccountId) -> Result<(), ink_env::Error>  {
+        fn give_nft(&self, to: AccountId) {
             let selector = Selector::new([0xFE, 0xED, 0xBA, 0xBE]);
             let params = build_call::<Environment>()
                             .callee(self.reward_contract_address)
@@ -201,7 +238,6 @@ mod candle_auction {
                         v,
                         self.reward_contract_address
                     );
-                    Ok(())
                 }
                 Err(e) => {
                     match e {
@@ -209,12 +245,12 @@ mod candle_auction {
                         | ink_env::Error::NotCallable => {
                             // Our recipient wasn't a smart contract, so there's nothing more for
                             // us to do
-                            ink_env::debug_println!(
+                            let msg = ink_prelude::format!(
                                 "Recipient at {:#04X?} from is not a smart contract ({:?})", 
                                 self.reward_contract_address, 
                                 e
                             );
-                            Err(e)
+                            panic!("{}",msg)
                         }
                         _ => {
                             // We got some sort of error from the call to our recipient smart
@@ -226,69 +262,21 @@ mod candle_auction {
                                 selector.to_bytes()
                             
                             );
-                            ink_env::debug_println!("{}", &msg);
-                            Err(e)
+                            panic!("{}",msg)
                         }
                     }
                 }
             }
         }
 
-        /// Pay back.
-        /// Winner gets her reward.
-        /// Losser get his balance back.  
-        fn pay_back(&mut self, reward: fn(&Self) -> (), to: AccountId) {
-            // should be executed only on Ended auction 
-            assert_eq!(self.get_status(), AuctionStatus::Ended, "Auction is not Ended, no payback is possible!");
 
-            if let Some(winner) = self.get_winner() {
-                // winner gets her reward
-                if to == winner {
-                    // remove winner balance from ledger: it's not her money anymore
-                    self.balances.take(&winner);
-                    reward(&self);
-                    return
-                }
-            }
-            
-            // pay the looser his bidded amount back
-            let bal = self.balances.take(&to).unwrap();
-            // zero-balance check: bid 0 is possible, but nothing to pay back
-            if bal > 0 {
-                    // and pay  
-                    transfer::<Environment>(to,bal).unwrap();
-                }
-        }
-        /// Pluggable reward logic: OPTION-1.    
-        /// Reward with NFT(s) (ERC721).  
-        /// Contract rewards auction winner by giving her approval to transfer 
-        /// ERC721 tokens on behalf of the auction contract.  
-        ///
-        /// DESIGN DECISION: we call ERC721 set_approval_for_all() instead of approve() for  
-        ///  1. the sake of simplicity, no need to specify TokenID  
-        ///     as we need to send this token to the contract anyway,  _ater_ instantiation 
-        ///     but still _before_ auctions starts
-        ///  2. this allows to set auction for collection of tokens instead of just for one thing
-        /// 
-        /// This message can be invoked by anyone to pay the reward.  
-        /// Still only the winner gets the reward as the result.  
-        fn give_nft(&self) {
-            // check there is a winner
-            let winner = self.get_winner().expect("No winner so far!");
+        /// Pluggable reward logic: OPTION-2.    
+        /// Reward with domain name.  
+        /// Contract rewards auction winner by transferring her auctioned
+        /// domain name using the dns contract.  
+        fn give_domain(&self) {
 
-            match self.approve_nfts(winner) {
-                Ok(()) => {},
-                Err(e) => {
-                            panic!("{:?}", &e)
-                          }
-            }
         }
-        // / Withdraw all contract balance (Jack Pot!)
-        //fn jackpot() (TBD) 
-        // / Get other (e.g. controller) contract ownership
-        //fn controller() (TBD)
-        // / Get domain name (see dns contract)
-        //fn domain() (TBD)
 
         /// Message to get the status of the auction given the current block number.
         #[ink(message)]
@@ -405,7 +393,7 @@ mod candle_auction {
            // and hence payout is not possible
            // Bob calls for payout
            set_sender::<Environment>(bob,100);            
-           auction.give_nft();
+           auction.payout();
 
            // contract panics here
         }
