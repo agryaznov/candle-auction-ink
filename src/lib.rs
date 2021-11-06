@@ -449,14 +449,14 @@ mod candle_auction {
 
         #[ink::test]
         #[should_panic]
-        fn no_winner_no_nft_payout() {
+        fn not_ended_no_payout() {
            // given 
            // Alice and Bob
            let alice = ink_env::test::default_accounts::<Environment>().unwrap().alice;
            let bob = ink_env::test::default_accounts::<Environment>().unwrap().bob;
 
            // and an auction
-           let mut auction = CandleAuction::new(Some(1),10,20,AccountId::from(DEFAULT_CALLEE_HASH));
+           let mut auction = CandleAuction::new(Some(1),10,20,None,None,AccountId::from(DEFAULT_CALLEE_HASH));
            run_to_block::<Environment>(27);
            
            // Alice bids
@@ -476,7 +476,7 @@ mod candle_auction {
 
         #[ink::test]
         fn new_works() {
-            let candle_auction = CandleAuction::new(Some(10),5,10,AccountId::from(DEFAULT_CALLEE_HASH));
+            let candle_auction = CandleAuction::new(Some(10),5,10,None,None,AccountId::from(DEFAULT_CALLEE_HASH));
             assert_eq!(candle_auction.start_block, 10);
             assert_eq!(candle_auction.get_status(), AuctionStatus::NotStarted);
         }
@@ -484,7 +484,7 @@ mod candle_auction {
         #[ink::test]
         fn new_default_start_block_works() {
             run_to_block::<Environment>(12);
-            let candle_auction = CandleAuction::new(None,5,10,AccountId::from(DEFAULT_CALLEE_HASH));
+            let candle_auction = CandleAuction::new(None,5,10,None,None,AccountId::from(DEFAULT_CALLEE_HASH));
             assert_eq!(candle_auction.start_block, 13);
             assert_eq!(candle_auction.get_status(), AuctionStatus::NotStarted);
         }
@@ -493,7 +493,7 @@ mod candle_auction {
         #[should_panic]
         fn cannot_init_backdated_auction() {
             run_to_block::<Environment>(27);
-            CandleAuction::new(Some(1),10,20,AccountId::from(DEFAULT_CALLEE_HASH));
+            CandleAuction::new(Some(1),10,20,None,None,AccountId::from(DEFAULT_CALLEE_HASH));
         }
 
         #[ink::test]
@@ -501,7 +501,7 @@ mod candle_auction {
             // an auction with the following picture:
             //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
             //     | opening  |             ending    |     
-            let candle_auction = CandleAuction::new(Some(2),4,7,AccountId::from(DEFAULT_CALLEE_HASH));
+            let candle_auction = CandleAuction::new(Some(2),4,7,None,None,AccountId::from(DEFAULT_CALLEE_HASH));
 
             assert_eq!(candle_auction.get_status(), AuctionStatus::NotStarted);
             run_to_block::<Environment>(1);
@@ -526,7 +526,7 @@ mod candle_auction {
 
             // when 
             // auction starts at block #5
-            let mut auction = CandleAuction::new(Some(5),5,10,AccountId::from(DEFAULT_CALLEE_HASH));
+            let mut auction = CandleAuction::new(Some(5),5,10,None,None,AccountId::from(DEFAULT_CALLEE_HASH));
 
             // and Alice tries to make a bid before block #5
             auction.bid();
@@ -541,7 +541,7 @@ mod candle_auction {
             // given
             // default account (Alice)
             // and auction starts at block #1 and ended after block #15
-            let mut auction = CandleAuction::new(None,5,10,AccountId::from(DEFAULT_CALLEE_HASH));
+            let mut auction = CandleAuction::new(None,5,10,None,None,AccountId::from(DEFAULT_CALLEE_HASH));
 
             // when 
             // Auction is ended
@@ -558,7 +558,7 @@ mod candle_auction {
         fn bidding_works() {
             // given
             let alice = ink_env::test::default_accounts::<Environment>().unwrap().alice;
-            let mut auction = CandleAuction::new(None,5,10,AccountId::from(DEFAULT_CALLEE_HASH));
+            let mut auction = CandleAuction::new(None,5,10,None,None,AccountId::from(DEFAULT_CALLEE_HASH));
             // when
             // Push block to 1 to make auction started
             run_to_block::<Environment>(1);
@@ -590,7 +590,7 @@ mod candle_auction {
             let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().alice;
             let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().bob;
             // and an auction
-            let mut auction = CandleAuction::new(None,5,10,AccountId::from(DEFAULT_CALLEE_HASH));
+            let mut auction = CandleAuction::new(None,5,10,None,None,AccountId::from(DEFAULT_CALLEE_HASH));
             // when
             // auction starts
             run_to_block::<Environment>(1);
@@ -614,7 +614,7 @@ mod candle_auction {
             // an auction with the following structure:
             //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
             //     | opening  |        ending         |     
-            let mut auction = CandleAuction::new(Some(2),4,7,AccountId::from(DEFAULT_CALLEE_HASH));
+            let mut auction = CandleAuction::new(Some(2),4,7,None,None,AccountId::from(DEFAULT_CALLEE_HASH));
 
             // Alice and Bob 
             let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().alice;
@@ -682,7 +682,7 @@ mod candle_auction {
             let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().alice;
             let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().bob;
             // and an auction
-            let mut auction = CandleAuction::new(None,5,10,AccountId::from(DEFAULT_CALLEE_HASH));
+            let mut auction = CandleAuction::new(None,5,10,None,None,AccountId::from(DEFAULT_CALLEE_HASH));
 
             // when
             // auction starts
