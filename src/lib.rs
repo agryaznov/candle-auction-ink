@@ -72,10 +72,9 @@ mod candle_auction {
         /// The number of blocks of Ending period, over which an auction may be retroactively ended.
         /// We assume this period starts right after Opening perid ends.
         ending_period: BlockNumber,
-        /// Bids storage: 
-        /// we store only one last (top) bid per user as a hashmap (account => amount) (inner hashmap)
-        /// (therefore it also serves as users balances ledger)
-        bids: StorageHashMap<AccountId,Balance>,
+        /// Bidders balances storage.  
+        /// Current user's balance = her top bid
+        balances: StorageHashMap<AccountId,Balance>,
         /// *winning* <bidder> = current top bidder.  
         /// Not to be confused with *winner* = bidder who finally won.   
         winning: Option<AccountId>,
@@ -101,8 +100,8 @@ mod candle_auction {
             ending_period: BlockNumber,
             reward_contract_address: AccountId,
         ) -> Self {
-            // TODO: problem: somehow contract should get ownership on the NFT token to this moment
-            // but how here in the contructor it's not yet even instantiated... 
+            // problem: somehow contract should get ownership on the NFT token to this moment
+            // but here in the contructor it's not yet even instantiated... 
             // maybe it's not a problem, as bidders could check
             // which tokens owned by the contract before they bid
 
@@ -118,7 +117,7 @@ mod candle_auction {
                 start_block: start_in,
                 opening_period,
                 ending_period,
-                bids: StorageHashMap::new(),
+                balances: StorageHashMap::new(),
                 winning: None,
                 winning_data,
                 reward_contract_address,
@@ -158,21 +157,21 @@ mod candle_auction {
             };
 
             let mut bid = bid_increment;
-            if let Some(balance) = self.bids.get(&bidder) {
+            if let Some(balance) = self.balances.get(&bidder) {
                 // update new_balance = old_balance + transferred_balance
                 bid += balance;
             }
 
             // do not accept bids lesser that current top bid
             if let Some(winning) = self.winning {
-                let winning_balance = *self.bids.get(&winning).unwrap_or(&0);
+                let winning_balance = *self.balances.get(&winning).unwrap_or(&0);
                 if bid < winning_balance {
                     return Err(Error::NotOutBidding(bid,winning_balance))
                 }
             }
 
             // finally, accept bid
-            self.bids.insert(bidder, bid);
+            self.balances.insert(bidder, bid);
             self.winning = Some(bidder);
             // and update winning_data
             // for retrospective candle-fashioned winning bidder detection
@@ -235,27 +234,30 @@ mod candle_auction {
             }
         }
 
-        /// Pay back looser bids
-        fn pay_back(&mut self) {
-            // should exec only on Ended auction 
+        /// Pay back.
+        /// Winner gets her reward.
+        /// Losser get his balance back.  
+        fn pay_back(&mut self, to: AccountId) {
+            // should be executed only on Ended auction 
             assert_eq!(self.get_status(), AuctionStatus::Ended, "Auction is not Ended, no payback is possible!");
 
-            // remove winner balance from ledger: it's not her money anymore
             if let Some(winner) = self.get_winner() {
-                self.bids.take(&winner);
+                // winner gets her reward
+                if to == winner {
+                    // remove winner balance from ledger: it's not her money anymore
+                    self.balances.take(&winner);
+                    self.give_nft();
+                    return
+                }
             }
-
-            // TODO: 
-            // 1. benchmark vs non-storage-modification version
-            // 2. benchmark single tx vs bulk vs (should the caller pay gas for others?)
-            //
-            // iterate over loosers and pay each balance back
-            for (acc,bal) in self.bids.iter_mut() {
-                // remove ledger record
-                // and pay  
-                // TODO: zero-check
-                transfer::<Environment>(*acc,*bal).unwrap();
-            }
+            
+            // pay the looser his bidded amount back
+            let bal = self.balances.take(&to).unwrap();
+            // zero-balance check: bid 0 is possible, but nothing to pay back
+            if bal > 0 {
+                    // and pay  
+                    transfer::<Environment>(to,bal).unwrap();
+                }
         }
         /// Pluggable reward logic: OPTION-1.    
         /// Reward with NFT(s) (ERC721).  
@@ -333,19 +335,11 @@ mod candle_auction {
             }
         }
 
-        /// Message to claim the payouts.  
-        /// Reward the winner  
-        /// and pay all others balances back.  
+        /// Message to claim the payout.  
         #[ink(message)]
         pub fn payout(&mut self) {
-            // pay back to loosers
-            self.pay_back();
-
-            // Give the winner approval to transfer NFT(s)
-            if let Some(_winner) = self.get_winner() {
-                self.give_nft();
-            }
-
+            let caller = self.env().caller();
+            self.pay_back(caller);
             // TODO: get contract owner right to take all money left   
         }
     }
@@ -361,7 +355,7 @@ mod candle_auction {
         use ink_env::test::get_account_balance as user_balance;
         use ink_env::balance as contract_balance;
 
-        const DEFAULT_CALLEE_HASH: [u8; 32] = [0x07; 32];
+        const DEFAULT_CALLEE_HASH: [u8; 32] = [0x06; 32];
 
         fn run_to_block<T>(n: T::BlockNumber)
         where 
@@ -381,10 +375,9 @@ mod candle_auction {
         where 
             T: ink_env::Environment<Balance = u128>,
         {
-            const WALLET: [u8; 32] = [7; 32];
             ink_env::test::push_execution_context::<Environment>(
                 sender,
-                WALLET.into(),
+                ink_env::account_id::<Environment>(),
                 1000000,
                 amount, 
                 ink_env::test::CallData::new(ink_env::call::Selector::new([0x00; 4])), /* dummy */
@@ -513,7 +506,7 @@ mod candle_auction {
 
             // then
             // bid is accepted
-            assert_eq!(auction.bids.get(&alice),Some(&100));
+            assert_eq!(auction.balances.get(&alice),Some(&100));
             // and Alice is currently winning 
             assert_eq!(auction.winning, Some(alice));
 
@@ -522,7 +515,7 @@ mod candle_auction {
             run_to_block::<Environment>(2);
             set_sender::<Environment>(alice,25);            
             auction.bid();
-            assert_eq!(auction.bids.get(&alice),Some(&125));
+            assert_eq!(auction.balances.get(&alice),Some(&125));
             // and Alice is still winning
             assert_eq!(auction.winning, Some(alice));
         }
@@ -615,6 +608,10 @@ mod candle_auction {
             );
         }
 
+        // We can't check that winner get rewarded in offchain tests,
+        // as it requires cross-contract calling.
+        // Hence we check here just that the winner is determined
+        // and the looser can get his bidded amount back
         #[ink::test]
         fn noncandle_win_and_payout_work() {
             // given
@@ -623,9 +620,11 @@ mod candle_auction {
             let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>().unwrap().bob;
             // and an auction
             let mut auction = CandleAuction::new(None,5,10,AccountId::from(DEFAULT_CALLEE_HASH));
+
             // when
             // auction starts
             run_to_block::<Environment>(1);
+
             // Alice bids 100
             set_sender::<Environment>(alice, 100);
             auction.bid();
@@ -638,8 +637,16 @@ mod candle_auction {
             // Auction ends 
             run_to_block::<Environment>(17);
 
+            // then
             // Bob wins (with bid 101) 
             assert_eq!(auction.get_noncandle_winner(), Some(bob));
+
+            // dirty hack
+            // TODO: report problem: contract balance isn't changed with called payables
+            ink_env::test::set_account_balance::<Environment>(
+                ink_env::account_id::<Environment>(),
+                100000000,
+            ).unwrap();
 
             // balances: [alice's, bob's, contract's]
             let balances_before = [
@@ -647,8 +654,13 @@ mod candle_auction {
                             user_balance::<Environment>(bob).unwrap(), 
                             contract_balance::<Environment>()
                         ];
+            ink_env::debug_println!("balances_before: {:?}", balances_before);
 
-            // Alice claims payout 
+            // we don't check payout claimed by winner Bob
+            // offchain env does not support cross-contract calling
+            // auction.payout();
+
+            // payout claimed by looser Alice
             set_sender::<Environment>(alice, 0);
             auction.payout();
 
@@ -657,20 +669,26 @@ mod candle_auction {
                             user_balance::<Environment>(bob).unwrap(), 
                             contract_balance::<Environment>()
                         ];
+            ink_env::debug_println!("balances_after: {:?}", balances_after);
 
             let mut balances_diff = [0; 3];
             for i in 0..3 {
-                balances_diff[i] = balances_before[i] - balances_after[i];
+                balances_diff[i] = balances_after[i].wrapping_sub(balances_before[i]);
             }
-            // then
-            // Bob as winner gets no money back
-            // Alice gets back her bidded amount
-            // Contract gets Bob's bidded amount
-            assert_eq!(balances_diff,[0, 100, 101]);
-            // Alice as looser gives her bidded money back
 
+            // then
+            // Alice gets back her bidded amount => diff = +100
+            // Bob as winner gets no money back => diff = 0
+            // Contract pays that amount to Alice => diff = -100
+            // balances_diff == [100,0,-100]
+            assert_eq!(balances_diff,[100, 0, 0u128.wrapping_sub(100)]);
             
+            // and
             // Contract ledger cleared
+            // Again, except winner's balance, 
+            // which will be cleared once he claims the reward,
+            // which cannot be tested in offchain env
+            assert_eq!(auction.balances.len(), 1);
 
         }
         
