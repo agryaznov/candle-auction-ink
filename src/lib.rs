@@ -237,7 +237,7 @@ mod candle_auction {
         /// Pay back.
         /// Winner gets her reward.
         /// Losser get his balance back.  
-        fn pay_back(&mut self, to: AccountId) {
+        fn pay_back(&mut self, reward: fn(&Self) -> (), to: AccountId) {
             // should be executed only on Ended auction 
             assert_eq!(self.get_status(), AuctionStatus::Ended, "Auction is not Ended, no payback is possible!");
 
@@ -246,7 +246,7 @@ mod candle_auction {
                 if to == winner {
                     // remove winner balance from ledger: it's not her money anymore
                     self.balances.take(&winner);
-                    self.give_nft();
+                    reward(&self);
                     return
                 }
             }
@@ -272,8 +272,7 @@ mod candle_auction {
         /// 
         /// This message can be invoked by anyone to pay the reward.  
         /// Still only the winner gets the reward as the result.  
-        #[ink(message)]
-        pub fn give_nft(&self) {
+        fn give_nft(&self) {
             // check there is a winner
             let winner = self.get_winner().expect("No winner so far!");
 
@@ -339,8 +338,8 @@ mod candle_auction {
         #[ink(message)]
         pub fn payout(&mut self) {
             let caller = self.env().caller();
-            self.pay_back(caller);
-            // TODO: get contract owner right to take all money left   
+            self.pay_back(Self::give_nft, caller);
+            // TODO: give contract owner right to withdraw winner's bid   
         }
     }
 
