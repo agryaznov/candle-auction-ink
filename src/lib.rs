@@ -52,7 +52,7 @@ mod candle_auction {
         // / randomness to select the winner. The number represents how many blocks we have been waiting.
         // VrfDelay(BlockNumber),
     }
-   
+
     /// Event emitted when a nft_payout happened.
     #[ink(event)]
     pub struct PayoutNFT {
@@ -84,9 +84,15 @@ mod candle_auction {
         /// i-indexed value is winner for sample (block) #i of EndingPeriod
         winning_data: StorageVec<Option<(AccountId,Balance)>>,
         /// ERC721 contract
-        // erc721: Lazy<Erc721>,
-        /// rewarding NFT contract
+        /// rewarding contract address (NFT or DNS)
         reward_contract_address: AccountId,
+        /// What we are bidding for?
+        /// 0 = NFT <-- default
+        /// 1 = DNS
+        /// 2..255 = reserved for further contracts addition
+        subject: u8,
+        /// Domain name (in case we bid for it)
+        domain: Option<Hash>,
     }
 
     impl CandleAuction {
@@ -98,12 +104,28 @@ mod candle_auction {
             start_block: Option<BlockNumber>, 
             opening_period: BlockNumber, 
             ending_period: BlockNumber,
+            subject: Option<u8>,
+            domain: Option<Hash>,
             reward_contract_address: AccountId,
         ) -> Self {
-            // problem: somehow contract should get ownership on the NFT token to this moment
-            // but here in the contructor it's not yet even instantiated... 
-            // maybe it's not a problem, as bidders could check
-            // which tokens owned by the contract before they bid
+            let subj = match subject {
+                None => { 
+                    // default is NFT auction
+                    0
+                },
+                Some(0) => {
+                    0
+                },
+                Some(1) => {
+                // if the auction is for dns, 
+                // the domain name should be specified on init
+                domain.expect("Domain name put up for auction should be specified!");
+                1
+                },
+                _ => {
+                    panic!("Only subjects [0,1] are supported so far!")
+                }
+            };
 
             let now = Self::env().block_number();
             let start_in = start_block.unwrap_or(now+1);
@@ -121,6 +143,8 @@ mod candle_auction {
                 winning: None,
                 winning_data,
                 reward_contract_address,
+                subject: subj,
+                domain,
             }
         }
 
@@ -193,6 +217,7 @@ mod candle_auction {
                 if to == winner {
                     // remove winner balance from ledger: it's not her money anymore
                     self.balances.take(&winner);
+                    // reward winner with specified function call
                     reward(&self, to);
                     return
                 }
@@ -273,8 +298,59 @@ mod candle_auction {
         /// Pluggable reward logic: OPTION-2.    
         /// Reward with domain name.  
         /// Contract rewards auction winner by transferring her auctioned
-        /// domain name using the dns contract.  
-        fn give_domain(&self) {
+        /// domain name using the dns contract. 
+        /// 
+        /// Cross conract call to ERC721 set_approval_for_all() method,  
+        /// which is expected to have the selector: 0xC0CACADE   
+
+        fn give_domain(&self, to: AccountId) {
+            // TODO: DRY, as it is almost the same as give_nft
+            let selector = Selector::new([0xC0, 0xCA, 0xCA, 0xDE]); // <- 1 of 2 only differences
+            let params = build_call::<Environment>()
+                            .callee(self.reward_contract_address)
+                            .exec_input(
+                                ExecutionInput::new(selector)
+                                    .push_arg(self.domain) // <- 2 of 2 only differences
+                                    .push_arg(to)
+                            )
+                            .returns::<ReturnType<Result<(), Error>>>();
+
+            match params.fire() {
+                Ok(v) => {
+                    ink_env::debug_println!(
+                        "Received return value \"{:?}\" from contract {:?}",
+                        v,
+                        self.reward_contract_address
+                    );
+                }
+                Err(e) => {
+                    match e {
+                        ink_env::Error::CodeNotFound
+                        | ink_env::Error::NotCallable => {
+                            // Our recipient wasn't a smart contract, so there's nothing more for
+                            // us to do
+                            let msg = ink_prelude::format!(
+                                "Recipient at {:#04X?} from is not a smart contract ({:?})", 
+                                self.reward_contract_address, 
+                                e
+                            );
+                            panic!("{}",msg)
+                        }
+                        _ => {
+                            // We got some sort of error from the call to our recipient smart
+                            // contract, and as such we must revert this call
+                            let msg = ink_prelude::format!(
+                                "Got error \"{:?}\" while trying to call {:?} with SELECTOR: {:?}",
+                                e,
+                                self.reward_contract_address, 
+                                selector.to_bytes()
+                            
+                            );
+                            panic!("{}",msg)
+                        }
+                    }
+                }
+            }
 
         }
 
