@@ -15,7 +15,7 @@ This is an [Ink!](https://github.com/paritytech/ink) smartcontract implementing 
   //     | opening  |        ending         |   
   ```
 - The contract accepts payments and records participants` balances.
-- Bids storage is a *HashMap* which stores only a top bid per user, therefore serving as users` balances ledger.  
+- Bidders balances as stored as a *HashMap* which effectively presents top bid per user.  
 - In order to make *candle* logic possible, we also store `winning_data` in featured *StorageVec* which holds bids for every *sample*.
 - *Sample* is a number of consequent blocks identifying a time interval inside Ending Period.  
   In *PoC* version, sample equals to a single block. This will be enhanced later to be a configurable parameter.  
@@ -75,7 +75,6 @@ and deploy it through the [Canvas UI](https://paritytech.github.io/canvas-ui/#/)
 
 ## Check the Docs out
 ```
-cd candle-auction-ink
 cargo +nightly doc --lib --no-deps --document-private-items --open
 ```
 

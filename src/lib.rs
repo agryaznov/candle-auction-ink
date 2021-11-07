@@ -6,7 +6,6 @@
 use ink_lang as ink;
 
 #[ink::contract]
-/// Candle Auction module
 mod candle_auction {
     use ink_env::{
         call::{build_call, utils::ReturnType, ExecutionInput, Selector},
@@ -29,10 +28,11 @@ mod candle_auction {
     }
 
     /// Auction statuses
-    /// logic inspired by [Parachain Auction](https://github.com/paritytech/polkadot/blob/master/runtime/common/src/traits.rs#L160)
+    /// logic inspired by 
+    /// [Parachain Auction](https://github.com/paritytech/polkadot/blob/master/runtime/common/src/traits.rs#L160)
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(::scale_info::TypeInfo))]
-    pub enum AuctionStatus {
+    pub enum Status {
         /// An auction has not started yet.
         NotStarted,
         /// We are in the starting period of the auction, collecting initial bids.
@@ -47,11 +47,30 @@ mod candle_auction {
         // VrfDelay(BlockNumber),
     }
 
-    /// Event emitted when a nft_payout happened.
+    /// Auction subject: what are we bidding for?
+    #[derive(scale::Encode, scale::Decode, scale_info::TypeInfo)]
+    pub enum Subject {
+        NFTs,
+        Domain(Hash),
+    }
+
+    /// Event emitted when a bid is accepted.
     #[ink(event)]
-    pub struct PayoutNFT {
+    pub struct Bid {
+       #[ink(topic)]
+       from: AccountId,
+
+       bid: Balance,
+    }
+   
+    /// Event emitted when the auction winner is rewarded.
+    #[ink(event)]
+    pub struct Reward {
         #[ink(topic)]
-        to: Option<AccountId>,
+        to: AccountId,
+
+        contract: AccountId,
+        subject: Subject
     }
 
     /// Defines the storage of the contract.
@@ -144,23 +163,23 @@ mod candle_auction {
         }
 
         /// Auction status.
-        fn status(&self, block: BlockNumber) -> AuctionStatus {
+        fn status(&self, block: BlockNumber) -> Status {
             let opening_period_last_block = self.start_block + self.opening_period - 1;
             let ending_period_last_block = opening_period_last_block + self.ending_period;
 
             if block >= self.start_block {
                 if block > opening_period_last_block {
                     if block > ending_period_last_block {
-                        AuctionStatus::Ended
+                        Status::Ended
                     } else {
                         // number of slot = number of block inside ending period
-                        AuctionStatus::EndingPeriod(block - opening_period_last_block)
+                        Status::EndingPeriod(block - opening_period_last_block)
                     }
                 } else {
-                    AuctionStatus::OpeningPeriod
+                    Status::OpeningPeriod
                 }
             } else {
-                AuctionStatus::NotStarted
+                Status::NotStarted
             }
         }
 
@@ -174,8 +193,8 @@ mod candle_auction {
             // fail unless auction is active
             let auction_status = self.status(block);
             let offset = match auction_status {
-                AuctionStatus::OpeningPeriod => 0,
-                AuctionStatus::EndingPeriod(o) => o,
+                Status::OpeningPeriod => 0,
+                Status::EndingPeriod(o) => o,
                 _ => return Err(Error::AuctionNotActive),
             };
 
@@ -202,7 +221,13 @@ mod candle_auction {
                 Err(ink_storage::collections::vec::IndexOutOfBounds) => {
                     Err(Error::WinningDataCorrupted)
                 }
-                Ok(_) => Ok(()),
+                Ok(_) => {
+                    self.env().emit_event(Bid {
+                        from: bidder,
+                        bid: bid,
+                    });
+                    Ok(())
+                },
             }
         }
 
@@ -213,7 +238,7 @@ mod candle_auction {
             // should be executed only on Ended auction
             assert_eq!(
                 self.get_status(),
-                AuctionStatus::Ended,
+                Status::Ended,
                 "Auction is not Ended, no payback is possible!"
             );
 
@@ -258,12 +283,12 @@ mod candle_auction {
                 .returns::<ReturnType<Result<(), Error>>>();
 
             match params.fire() {
-                Ok(v) => {
-                    ink_env::debug_println!(
-                        "Received return value \"{:?}\" from contract {:?}",
-                        v,
-                        self.reward_contract_address
-                    );
+                Ok(_v) => {
+                    self.env().emit_event(Reward {
+                        to: to,
+                        subject: Subject::NFTs,
+                        contract: self.reward_contract_address
+                    });
                 }
                 Err(e) => {
                     match e {
@@ -313,12 +338,12 @@ mod candle_auction {
                 .returns::<ReturnType<Result<(), Error>>>();
 
             match params.fire() {
-                Ok(v) => {
-                    ink_env::debug_println!(
-                        "Received return value \"{:?}\" from contract {:?}",
-                        v,
-                        self.reward_contract_address
-                    );
+                Ok(_v) => {
+                    self.env().emit_event(Reward {
+                        to: to,
+                        subject: Subject::Domain(self.domain.unwrap()),
+                        contract: self.reward_contract_address
+                    });
                 }
                 Err(e) => {
                     match e {
@@ -350,7 +375,7 @@ mod candle_auction {
 
         /// Message to get the status of the auction given the current block number.
         #[ink(message)]
-        pub fn get_status(&self) -> AuctionStatus {
+        pub fn get_status(&self) -> Status {
             let now = self.env().block_number();
             self.status(now)
         }
@@ -364,7 +389,7 @@ mod candle_auction {
         /// Message to get auction winner in noncandle fashion.  
         /// To avoid ambiguity, winner is determined once the auction ended.  
         pub fn get_noncandle_winner(&self) -> Option<AccountId> {
-            if self.get_status() == AuctionStatus::Ended {
+            if self.get_status() == Status::Ended {
                 self.winning
             } else {
                 None
@@ -492,7 +517,7 @@ mod candle_auction {
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
             assert_eq!(candle_auction.start_block, 10);
-            assert_eq!(candle_auction.get_status(), AuctionStatus::NotStarted);
+            assert_eq!(candle_auction.get_status(), Status::NotStarted);
         }
 
         #[ink::test]
@@ -507,7 +532,7 @@ mod candle_auction {
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
             assert_eq!(candle_auction.start_block, 13);
-            assert_eq!(candle_auction.get_status(), AuctionStatus::NotStarted);
+            assert_eq!(candle_auction.get_status(), Status::NotStarted);
         }
 
         #[ink::test]
@@ -538,19 +563,19 @@ mod candle_auction {
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
 
-            assert_eq!(candle_auction.get_status(), AuctionStatus::NotStarted);
+            assert_eq!(candle_auction.get_status(), Status::NotStarted);
             run_to_block::<Environment>(1);
-            assert_eq!(candle_auction.get_status(), AuctionStatus::NotStarted);
+            assert_eq!(candle_auction.get_status(), Status::NotStarted);
             run_to_block::<Environment>(2);
-            assert_eq!(candle_auction.get_status(), AuctionStatus::OpeningPeriod);
+            assert_eq!(candle_auction.get_status(), Status::OpeningPeriod);
             run_to_block::<Environment>(5);
-            assert_eq!(candle_auction.get_status(), AuctionStatus::OpeningPeriod);
+            assert_eq!(candle_auction.get_status(), Status::OpeningPeriod);
             run_to_block::<Environment>(6);
-            assert_eq!(candle_auction.get_status(), AuctionStatus::EndingPeriod(1));
+            assert_eq!(candle_auction.get_status(), Status::EndingPeriod(1));
             run_to_block::<Environment>(12);
-            assert_eq!(candle_auction.get_status(), AuctionStatus::EndingPeriod(7));
+            assert_eq!(candle_auction.get_status(), Status::EndingPeriod(7));
             run_to_block::<Environment>(13);
-            assert_eq!(candle_auction.get_status(), AuctionStatus::Ended);
+            assert_eq!(candle_auction.get_status(), Status::Ended);
         }
 
         #[ink::test]
