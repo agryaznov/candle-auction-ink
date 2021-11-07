@@ -77,6 +77,8 @@ mod candle_auction {
     /// Defines the storage of the contract.
     #[ink(storage)]
     pub struct CandleAuction {
+        /// Contract owner
+        owner: AccountId,
         /// Stores a single `bool` value on the storage.
         // value: bool,
         start_block: BlockNumber,
@@ -151,6 +153,7 @@ mod candle_auction {
             (0..ending_period + 1).for_each(|_| winning_data.push(None));
 
             Self {
+                owner: Self::env().caller(),
                 start_block: start_in,
                 opening_period,
                 ending_period,
@@ -234,7 +237,8 @@ mod candle_auction {
 
         /// Pay back.
         /// Winner gets her reward.
-        /// Loosers get their balances back.  
+        /// Loosers get their balances back. 
+        /// Contract owner gets winner`s balance (winning bid)
         fn pay_back(&mut self, reward: fn(&Self, to: AccountId) -> (), to: AccountId) {
             // should be executed only on Ended auction
             assert_eq!(
@@ -246,11 +250,14 @@ mod candle_auction {
             if let Some(winner) = self.get_winner() {
                 // winner gets her reward
                 if to == winner {
-                    // remove winner balance from ledger: it's not her money anymore
-                    self.balances.take(&winner);
                     // reward winner with specified reward method call
                     reward(&self, to);
                     return;
+                } else if to == self.owner {
+                    // remove winner balance from ledger: 
+                    let bal = self.balances.take(&winner).unwrap();
+                    // it has been paid to auction owner
+                    transfer::<Environment>(to, bal).unwrap();
                 }
             }
 
@@ -403,7 +410,6 @@ mod candle_auction {
             let caller = self.env().caller();
             // invoke reward method
             self.pay_back(REWARD_METHODS[usize::from(self.subject)], caller);
-            // TODO: give contract owner right to withdraw winner's bid
         }
     }
 

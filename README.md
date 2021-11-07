@@ -1,5 +1,5 @@
 > :bangbang: This is a **Work in Progress**.  
-> Current status: [Milestone-1](https://github.com/w3f/Grants-Program/blob/master/rfps/candle-auction.md#milestone-1---basic-auction) 95% completed.  
+> Current status: [Milestone-1](https://github.com/w3f/Grants-Program/blob/master/applications/candle_auction_ink.md#milestone-1---basic-auction) 95% completed.  
 > **Use at your own risk**. 
 
 # 🕯️ Candle Auctions on Ink! 🎃
