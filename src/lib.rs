@@ -13,6 +13,7 @@ mod candle_auction {
     };
     use ink_storage::collections::HashMap as StorageHashMap;
     use ink_storage::Vec as StorageVec;
+    use scale::Encode;
 
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
@@ -28,7 +29,7 @@ mod candle_auction {
     }
 
     /// Auction statuses
-    /// logic inspired by 
+    /// logic inspired by
     /// [Parachain Auction](https://github.com/paritytech/polkadot/blob/master/runtime/common/src/traits.rs#L160)
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(::scale_info::TypeInfo))]
@@ -57,12 +58,12 @@ mod candle_auction {
     /// Event emitted when a bid is accepted.
     #[ink(event)]
     pub struct Bid {
-       #[ink(topic)]
-       from: AccountId,
+        #[ink(topic)]
+        from: AccountId,
 
-       bid: Balance,
+        bid: Balance,
     }
-   
+
     /// Event emitted when the auction winner is rewarded.
     #[ink(event)]
     pub struct Reward {
@@ -70,7 +71,7 @@ mod candle_auction {
         to: AccountId,
 
         contract: AccountId,
-        subject: Subject
+        subject: Subject,
     }
 
     /// Defines the storage of the contract.
@@ -227,7 +228,7 @@ mod candle_auction {
                         bid: bid,
                     });
                     Ok(())
-                },
+                }
             }
         }
 
@@ -262,6 +263,46 @@ mod candle_auction {
             }
         }
 
+        /// Cross contract invocation method  
+        /// common for both rewarding methods
+        fn invoke_contract<Args>(&self, contract: AccountId, input: ExecutionInput<Args>)
+        where
+            Args: Encode,
+        {
+            let params = build_call::<Environment>()
+                .callee(contract)
+                .exec_input(input)
+                .returns::<ReturnType<Result<(), Error>>>();
+
+            match params.fire() {
+                Ok(_v) => {}
+                Err(e) => {
+                    match e {
+                        ink_env::Error::CodeNotFound | ink_env::Error::NotCallable => {
+                            // Our recipient wasn't a smart contract, so there's nothing more for
+                            // us to do
+                            let msg = ink_prelude::format!(
+                                "Recipient at {:#04X?} from is not a smart contract ({:?})",
+                                self.reward_contract_address,
+                                e
+                            );
+                            panic!("{}", msg)
+                        }
+                        _ => {
+                            // We got some sort of error from the call to our recipient smart
+                            // contract, and as such we must revert this call
+                            let msg = ink_prelude::format!(
+                                "Got error \"{:?}\" while trying to call {:?}",
+                                e,
+                                self.reward_contract_address,
+                            );
+                            panic!("{}", msg)
+                        }
+                    }
+                }
+            }
+        }
+
         /// Pluggable reward logic: OPTION-1.    
         /// Reward with NFT(s) (ERC721).  
         /// Contract rewards an auction winner by giving her approval to transfer
@@ -277,45 +318,15 @@ mod candle_auction {
         /// which is expected to have the selector: 0xFEEDBABE   
         fn give_nft(&self, to: AccountId) {
             let selector = Selector::new([0xFE, 0xED, 0xBA, 0xBE]);
-            let params = build_call::<Environment>()
-                .callee(self.reward_contract_address)
-                .exec_input(ExecutionInput::new(selector).push_arg(to).push_arg(true))
-                .returns::<ReturnType<Result<(), Error>>>();
+            let input = ExecutionInput::new(selector).push_arg(to).push_arg(true);
 
-            match params.fire() {
-                Ok(_v) => {
-                    self.env().emit_event(Reward {
-                        to: to,
-                        subject: Subject::NFTs,
-                        contract: self.reward_contract_address
-                    });
-                }
-                Err(e) => {
-                    match e {
-                        ink_env::Error::CodeNotFound | ink_env::Error::NotCallable => {
-                            // Our recipient wasn't a smart contract, so there's nothing more for
-                            // us to do
-                            let msg = ink_prelude::format!(
-                                "Recipient at {:#04X?} from is not a smart contract ({:?})",
-                                self.reward_contract_address,
-                                e
-                            );
-                            panic!("{}", msg)
-                        }
-                        _ => {
-                            // We got some sort of error from the call to our recipient smart
-                            // contract, and as such we must revert this call
-                            let msg = ink_prelude::format!(
-                                "Got error \"{:?}\" while trying to call {:?} with SELECTOR: {:?}",
-                                e,
-                                self.reward_contract_address,
-                                selector.to_bytes()
-                            );
-                            panic!("{}", msg)
-                        }
-                    }
-                }
-            }
+            self.invoke_contract(self.reward_contract_address, input);
+
+            self.env().emit_event(Reward {
+                to: to,
+                subject: Subject::NFTs,
+                contract: self.reward_contract_address,
+            });
         }
 
         /// Pluggable reward logic: OPTION-2.    
@@ -326,51 +337,18 @@ mod candle_auction {
         /// Cross conract call to ERC721 set_approval_for_all() method,  
         /// which is expected to have the selector: 0xFEEDDEED   
         fn give_domain(&self, to: AccountId) {
-            // TODO: DRY, as it is almost the same as give_nft
-            let selector = Selector::new([0xFE, 0xED, 0xDE, 0xED]); // <- 1 of 2 only differences
-            let params = build_call::<Environment>()
-                .callee(self.reward_contract_address)
-                .exec_input(
-                    ExecutionInput::new(selector)
-                        .push_arg(self.domain) // <- 2 of 2 only differences
-                        .push_arg(to),
-                )
-                .returns::<ReturnType<Result<(), Error>>>();
+            let selector = Selector::new([0xFE, 0xED, 0xDE, 0xED]);
+            let input = ExecutionInput::new(selector)
+                .push_arg(self.domain)
+                .push_arg(to);
 
-            match params.fire() {
-                Ok(_v) => {
-                    self.env().emit_event(Reward {
-                        to: to,
-                        subject: Subject::Domain(self.domain.unwrap()),
-                        contract: self.reward_contract_address
-                    });
-                }
-                Err(e) => {
-                    match e {
-                        ink_env::Error::CodeNotFound | ink_env::Error::NotCallable => {
-                            // Our recipient wasn't a smart contract, so there's nothing more for
-                            // us to do
-                            let msg = ink_prelude::format!(
-                                "Recipient at {:#04X?} from is not a smart contract ({:?})",
-                                self.reward_contract_address,
-                                e
-                            );
-                            panic!("{}", msg)
-                        }
-                        _ => {
-                            // We got some sort of error from the call to our recipient smart
-                            // contract, and as such we must revert this call
-                            let msg = ink_prelude::format!(
-                                "Got error \"{:?}\" while trying to call {:?} with SELECTOR: {:?}",
-                                e,
-                                self.reward_contract_address,
-                                selector.to_bytes()
-                            );
-                            panic!("{}", msg)
-                        }
-                    }
-                }
-            }
+            self.invoke_contract(self.reward_contract_address, input);
+
+            self.env().emit_event(Reward {
+                to: to,
+                subject: Subject::Domain(self.domain.unwrap()),
+                contract: self.reward_contract_address,
+            });
         }
 
         /// Message to get the status of the auction given the current block number.
@@ -433,10 +411,10 @@ mod candle_auction {
     #[cfg(not(feature = "ink-experimental-engine"))]
     #[cfg(test)]
     mod tests {
-        use ink_lang as ink;
         use super::*;
         use ink_env::balance as contract_balance;
         use ink_env::test::get_account_balance as user_balance;
+        use ink_lang as ink;
 
         const DEFAULT_CALLEE_HASH: [u8; 32] = [0x06; 32];
 
