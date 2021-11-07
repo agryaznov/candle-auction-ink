@@ -1,4 +1,4 @@
-// (c) 2021 Alexader Gryaznov
+// (c) 2021 Alexander Gryaznov (agryaznov.com)
 //
 //! Candle Auction implemented with Ink! smartcontract
 
@@ -781,14 +781,21 @@ mod candle_auction {
         #[ink::test]
         fn noncandle_win_and_payout_work() {
             // given
-            // Alice and Bob
+            // Charlie is auction owner
+            let charlie = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                .unwrap()
+                .charlie;
+            // Alice and Bob are bidders
             let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                 .unwrap()
                 .alice;
             let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                 .unwrap()
                 .bob;
-            // and an auction
+
+
+            // Charlie sets up an auction
+            set_sender::<Environment>(charlie, 1000);
             let mut auction = CandleAuction::new(
                 None,
                 5,
