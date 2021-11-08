@@ -49,7 +49,8 @@ mod candle_auction {
     }
 
     /// Auction subject: what are we bidding for?
-    #[derive(scale::Encode, scale::Decode, scale_info::TypeInfo)]
+    #[derive(scale::Encode, scale::Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum Subject {
         NFTs,
         Domain(Hash),
@@ -256,8 +257,12 @@ mod candle_auction {
                 } else if to == self.owner {
                     // remove winner balance from ledger: 
                     let bal = self.balances.take(&winner).unwrap();
-                    // it has been paid to auction owner
-                    transfer::<Environment>(to, bal).unwrap();
+                    // zero-balance check: bid 0 is possible, but nothing to pay back
+                    if bal > 0 {
+                        // and pay for sold lot  
+                        // to auction owner
+                        transfer::<Environment>(to, bal).unwrap();
+                    }
                 }
             }
 
