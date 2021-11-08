@@ -263,6 +263,7 @@ mod candle_auction {
                         // to auction owner
                         transfer::<Environment>(to, bal).unwrap();
                     }
+                    return;
                 }
             }
 
