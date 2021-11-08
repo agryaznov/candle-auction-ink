@@ -125,6 +125,7 @@ mod candle_auction {
             domain: Option<Hash>,
             reward_contract_address: AccountId,
         ) -> Self {
+            ink_env::debug_println!("CONTRUCTOR!");
             let subj = match subject {
                 None => {
                     // default is NFT auction
@@ -134,10 +135,12 @@ mod candle_auction {
                 Some(1) => {
                     // if the auction is for dns,
                     // the domain name should be specified on init
+                    ink_env::debug_println!("IM HERE!");
                     domain.expect("Domain name put up for auction should be specified!");
                     1
-                }
+                },
                 _ => {
+                    ink_env::debug_println!("Only subjects [0,1] are supported so far!");
                     panic!("Only subjects [0,1] are supported so far!")
                 }
             };
