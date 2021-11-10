@@ -10,7 +10,6 @@ mod candle_auction {
     use ink_env::{
         call::{build_call, utils::ReturnType, ExecutionInput, Selector},
         transfer,
-        Clear
     };
     use ink_storage::collections::HashMap as StorageHashMap;
     use ink_storage::Vec as StorageVec;
@@ -122,27 +121,14 @@ mod candle_auction {
             start_block: Option<BlockNumber>,
             opening_period: BlockNumber,
             ending_period: BlockNumber,
-            subject: Option<u8>,
-            domain: Option<Hash>,
+            subject: u8,
+            domain: Hash,
             reward_contract_address: AccountId,
         ) -> Self {
-            let domain_name = domain.unwrap_or(Hash::clear());
-            let subj = match subject {
-                None => {
-                    // default subject is NFTs
-                    0
-                },
-                Some(0) => 0,
-                // we could check that domain is not zero here, 
-                // however, we won't, since bidder should check by herself 
-                // that domain put for the auction is both: 
-                //   1) correct (the one he wants), and 
-                //   2) belongs to the contract
-                Some(1) => 1,
-                _ => {
+            
+            if subject > 1 {
                     panic!("Only subjects [0,1] are supported so far!")
-                }
-            };
+            }
 
             let now = Self::env().block_number();
             let start_in = start_block.unwrap_or(now + 1);
@@ -164,8 +150,8 @@ mod candle_auction {
                 winning: None,
                 winning_data,
                 reward_contract_address,
-                subject: subj,
-                domain: domain_name,
+                subject,
+                domain,
             }
         }
 
@@ -438,6 +424,7 @@ mod candle_auction {
         use super::*;
         use ink_env::balance as contract_balance;
         use ink_env::test::get_account_balance as user_balance;
+        use ink_env::Clear;
         use ink_lang as ink;
 
         const DEFAULT_CALLEE_HASH: [u8; 32] = [0x06; 32];
@@ -487,8 +474,8 @@ mod candle_auction {
                 Some(1),
                 10,
                 20,
-                None,
-                None,
+                0,
+                Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
             run_to_block::<Environment>(27);
@@ -514,8 +501,8 @@ mod candle_auction {
                 Some(10),
                 5,
                 10,
-                None,
-                None,
+                0,
+                Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
             assert_eq!(candle_auction.start_block, 10);
@@ -529,8 +516,8 @@ mod candle_auction {
                 None,
                 5,
                 10,
-                None,
-                None,
+                0,
+                Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
             assert_eq!(candle_auction.start_block, 13);
@@ -545,8 +532,8 @@ mod candle_auction {
                 Some(1),
                 10,
                 20,
-                None,
-                None,
+                0,
+                Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
         }
@@ -560,8 +547,8 @@ mod candle_auction {
                 Some(2),
                 4,
                 7,
-                None,
-                None,
+                0,
+                Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
 
@@ -592,8 +579,8 @@ mod candle_auction {
                 Some(5),
                 5,
                 10,
-                None,
-                None,
+                0,
+                Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
 
@@ -614,8 +601,8 @@ mod candle_auction {
                 None,
                 5,
                 10,
-                None,
-                None,
+                0,
+                Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
 
@@ -640,8 +627,8 @@ mod candle_auction {
                 None,
                 5,
                 10,
-                None,
-                None,
+                0,
+                Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
             // when
@@ -683,8 +670,8 @@ mod candle_auction {
                 None,
                 5,
                 10,
-                None,
-                None,
+                0,
+                Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
             // when
@@ -714,8 +701,8 @@ mod candle_auction {
                 Some(2),
                 4,
                 7,
-                None,
-                None,
+                0,
+                Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
 
@@ -818,8 +805,8 @@ mod candle_auction {
                 None,
                 5,
                 10,
-                None,
-                None,
+                0,
+                Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
 
@@ -900,8 +887,8 @@ mod candle_auction {
                 Some(10),
                 5,
                 10,
-                Some(1),
-                Some(Hash::from([0x99; 32])),
+                1,
+                Hash::from([0x99; 32]),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
             assert_eq!(auction_with_domain.start_block, 10);
@@ -912,8 +899,8 @@ mod candle_auction {
                 Some(10),
                 5,
                 10,
-                Some(1),
-                None,
+                1,
+                Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
 
