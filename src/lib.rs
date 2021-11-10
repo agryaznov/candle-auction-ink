@@ -10,6 +10,7 @@ mod candle_auction {
     use ink_env::{
         call::{build_call, utils::ReturnType, ExecutionInput, Selector},
         transfer,
+        Clear
     };
     use ink_storage::collections::HashMap as StorageHashMap;
     use ink_storage::Vec as StorageVec;
@@ -109,7 +110,7 @@ mod candle_auction {
         /// 2..255 = reserved for further reward methods
         subject: u8,
         /// Domain name (in case we bid for it)
-        domain: Option<Hash>,
+        domain: Hash,
     }
 
     impl CandleAuction {
@@ -125,22 +126,20 @@ mod candle_auction {
             domain: Option<Hash>,
             reward_contract_address: AccountId,
         ) -> Self {
-            ink_env::debug_println!("CONTRUCTOR!");
+            let domain_name = domain.unwrap_or(Hash::clear());
             let subj = match subject {
                 None => {
-                    // default is NFT auction
+                    // default subject is NFTs
                     0
-                }
-                Some(0) => 0,
-                Some(1) => {
-                    // if the auction is for dns,
-                    // the domain name should be specified on init
-                    ink_env::debug_println!("IM HERE!");
-                    domain.expect("Domain name put up for auction should be specified!");
-                    1
                 },
+                Some(0) => 0,
+                // we could check that domain is not zero here, 
+                // however, we won't, since bidder should check by herself 
+                // that domain put for the auction is both: 
+                //   1) correct (the one he wants), and 
+                //   2) belongs to the contract
+                Some(1) => 1,
                 _ => {
-                    ink_env::debug_println!("Only subjects [0,1] are supported so far!");
                     panic!("Only subjects [0,1] are supported so far!")
                 }
             };
@@ -166,7 +165,7 @@ mod candle_auction {
                 winning_data,
                 reward_contract_address,
                 subject: subj,
-                domain,
+                domain: domain_name,
             }
         }
 
@@ -362,11 +361,21 @@ mod candle_auction {
 
             self.env().emit_event(Reward {
                 to: to,
-                subject: Subject::Domain(self.domain.unwrap()),
+                subject: Subject::Domain(self.domain),
                 contract: self.reward_contract_address,
             });
         }
 
+        /// Message to get the auction subject.
+        #[ink(message)]
+        pub fn get_subject(&self) -> Subject {
+            match self.subject {
+                0 => Subject::NFTs,
+                1 => Subject::Domain(self.domain),
+                _ => panic!("Current Subject is not supported!")
+            }
+        }
+        
         /// Message to get the status of the auction given the current block number.
         #[ink(message)]
         pub fn get_status(&self) -> Status {
@@ -883,6 +892,33 @@ mod candle_auction {
             // which will be cleared once he claims the reward,
             // which cannot be tested in offchain env
             assert_eq!(auction.balances.len(), 1);
+        }
+
+        #[ink::test]
+        fn dns_auction_new_works() {
+            let auction_with_domain = CandleAuction::new(
+                Some(10),
+                5,
+                10,
+                Some(1),
+                Some(Hash::from([0x99; 32])),
+                AccountId::from(DEFAULT_CALLEE_HASH),
+            );
+            assert_eq!(auction_with_domain.start_block, 10);
+            assert_eq!(auction_with_domain.domain, Hash::from([0x99; 32]));
+            assert_eq!(auction_with_domain.get_status(), Status::NotStarted);
+
+            let auction_no_domain = CandleAuction::new(
+                Some(10),
+                5,
+                10,
+                Some(1),
+                None,
+                AccountId::from(DEFAULT_CALLEE_HASH),
+            );
+
+            assert_eq!(auction_no_domain.domain, Hash::clear());
+
         }
     }
 }

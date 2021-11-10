@@ -105,35 +105,37 @@ and deploy it through the [Canvas UI](https://paritytech.github.io/canvas-ui/#/)
   duration of Ending Period in blocks
 + `subject`  
   auction subject:   
-  - `0` = NFT `<-- default`
+  - `0` = NFTs `<-- default`
   - `1` = DNS
   - `2..255` = reserved for further reward methods
 + `domain`  
-  in case of DNS subject, domain name to put up for action   
+  in case of DNS subject, the domain name to bid for     
 + `reward_contract_address`  
   address of the rewarding contract: [*ERC721*](https://github.com/agryaznov/ink/blob/candle-auction/examples/erc721/lib.rs) or [*DNS*](https://github.com/agryaznov/ink/blob/candle-auction/examples/dns/lib.rs)  
 
 2. Pass the auctioned entities ownership to the contract:  
    transfer NFT tokens / domain names to the instantiated auction contract.  
 
+  > **_:exclamation:NOTE_** sanity checks, like: *does the auction contract really possess the entities being bidded for?* - those ones are left totally on user's discretion.    
+
 **Action!**:  
 
-3. Place bids by invoking `bid()` method with an attached payment.  
-   > _**!NOTE** on bids design_:      
+1. Place bids by invoking `bid()` method with an attached payment.  
+   > _**:exclamation:NOTE** on bids design_:      
    > bids are accepted at *incremental manner*, i.e. every bid adds up to bidder's balance which effectively compounds her top (highest) bid.
    > E.g. Alice making calls:  
    > 1. `bid()` with `101` `<Balance>` <- Alice' top bid is 101   
    > some time later, she calls 
    > 2. `bid()` again, with `1000` `<Balance>` <- Alice' top bid now is 1101 (*not 1000*)
 
-4. Get current auction status by `get_status()` and winner `get_winner()` methods invocation.  
+2. Get current auction status by `get_status()` and winner `get_winner()` methods invocation.  
 
 4a. `[TDB]` Retroactive `candle` winner determination.
 
 **Settlement**:
 
 5. Once auction is done, participants (and contract owner) can claim their payouts/rewards with `payout()`.  
-   **_Note_** that in NFT auction winner gets approval to transer all conrtact's ERC721 tokens with this.  
+   > **_:exclamation:NOTE_** that in NFT auction winner gets approval to transer all conrtact's ERC721 tokens with this.  
    She should then *transer* these tokens by herself by manually calling `transfer_from()` on that ERC721 contract.
 
 
