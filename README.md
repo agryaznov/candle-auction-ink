@@ -64,15 +64,18 @@ cargo +nightly contract build
 ```
 
 ### Deploy
+First we deploy __*rewarding* contracts__ which represent entities being auctioned. After that, we deploy the auction itself.
+
 #### External rewarding contracts
 Two *pluggable reward* options are available:  
-  + NFT collection: by utilizing the ERC721 contract  
+  1. **NFT collection**: by utilizing the [ERC721](https://github.com/agryaznov/ink/blob/candle-auction/examples/erc721/lib.rs) contract  
     winner gets *set_approval_for_all()* tokens belonging to the auction contract  
-  + Doman name ownership: by utilizing the DNS contract  
+  2. **Doman name ownership**: by utilizing the [DNS](https://github.com/agryaznov/ink/blob/candle-auction/examples/dns/lib.rs) contract  
     which transfers to winner the domain name  put up for the auction    
 
-In order to make the auction contract preferably *loosely coupled* with other contracts, this very contract doesn't use their sources *as-a-dependency*. Instead, we consciously rely just on these external contracts ABI, and *hope that their main methods selectors will stay consistent*.  
-Okay, well, to guarantee this, let's use our fork of their codebase repo with explicit selectors:
+In order to make the auction contract preferably *loosely coupled* with other contracts, this very contract doesn't use their sources *as-a-dependency*. Instead, we rely just on these external contracts ABI, and *hope that their main methods selectors will stay consistent*.  
+
+Okay, though, to guarantee this, let's use our fork of their codebase repo with explicit selectors:
 
 ```
 git clone -b candle-auction git@github.com:agryaznov/ink.git
@@ -105,7 +108,7 @@ and deploy it through the [Canvas UI](https://paritytech.github.io/canvas-ui/#/)
   duration of Ending Period in blocks
 + `subject`  
   auction subject:   
-  - `0` = NFTs `<-- default`
+  - `0` = NFTs  
   - `1` = DNS
   - `2..255` = reserved for further reward methods
 + `domain`  
@@ -116,11 +119,11 @@ and deploy it through the [Canvas UI](https://paritytech.github.io/canvas-ui/#/)
 2. Pass the auctioned entities ownership to the contract:  
    transfer NFT tokens / domain names to the instantiated auction contract.  
 
-  > **_:exclamation:NOTE_** sanity checks, like: *does the auction contract really possess the entities being bidded for?* - those ones are left totally on user's discretion.    
+  > **_:exclamation:NOTE_** that sanity checks, like: *does the auction contract really possess the entities being bidded for?* - those ones are left totally on user's discretion.    
 
 **Action!**:  
 
-1. Place bids by invoking `bid()` method with an attached payment.  
+3. Place bids by invoking `bid()` method with an attached payment.  
    > _**:exclamation:NOTE** on bids design_:      
    > bids are accepted at *incremental manner*, i.e. every bid adds up to bidder's balance which effectively compounds her top (highest) bid.
    > E.g. Alice making calls:  
@@ -128,14 +131,14 @@ and deploy it through the [Canvas UI](https://paritytech.github.io/canvas-ui/#/)
    > some time later, she calls 
    > 2. `bid()` again, with `1000` `<Balance>` <- Alice' top bid now is 1101 (*not 1000*)
 
-2. Get current auction status by `get_status()` and winner `get_winner()` methods invocation.  
+4. Get current auction status by `get_status()` and winner `get_winner()` methods invocation.  
 
-4a. `[TDB]` Retroactive `candle` winner determination.
+(4a. `[TDB]` Retroactive `candle` winner determination.)
 
 **Settlement**:
 
 5. Once auction is done, participants (and contract owner) can claim their payouts/rewards with `payout()`.  
-   > **_:exclamation:NOTE_** that in NFT auction winner gets approval to transer all conrtact's ERC721 tokens with this.  
+   > **_:exclamation:NOTE_** that in NFT auction winner gets approval to transer all contract's ERC721 tokens with this. 
    She should then *transer* these tokens by herself by manually calling `transfer_from()` on that ERC721 contract.
 
 
@@ -152,4 +155,4 @@ See [Ink! docs](https://paritytech.github.io/ink-docs/) for developer documentat
 
 ## License
 
-[Apache License 2.0](https://choosealicense.com/licenses/apache-2.0/) © Alexander Gryaznov
+[Apache License 2.0](https://choosealicense.com/licenses/apache-2.0/) © Alexander Gryaznov ([agryaznov.com](https://agryaznov.com))
