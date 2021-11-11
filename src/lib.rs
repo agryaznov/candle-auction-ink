@@ -125,9 +125,8 @@ mod candle_auction {
             domain: Hash,
             reward_contract_address: AccountId,
         ) -> Self {
-            
             if subject > 1 {
-                    panic!("Only subjects [0,1] are supported so far!")
+                panic!("Only subjects [0,1] are supported so far!")
             }
 
             let now = Self::env().block_number();
@@ -226,7 +225,7 @@ mod candle_auction {
 
         /// Pay back.
         /// Winner gets her reward.
-        /// Loosers get their balances back. 
+        /// Loosers get their balances back.
         /// Contract owner gets winner`s balance (winning bid)
         fn pay_back(&mut self, reward: fn(&Self, to: AccountId) -> (), to: AccountId) {
             // should be executed only on Ended auction
@@ -243,11 +242,11 @@ mod candle_auction {
                     reward(&self, to);
                     return;
                 } else if to == self.owner {
-                    // remove winner balance from ledger: 
+                    // remove winner balance from ledger:
                     let bal = self.balances.take(&winner).unwrap();
                     // zero-balance check: bid 0 is possible, but nothing to pay back
                     if bal > 0 {
-                        // and pay for sold lot  
+                        // and pay for sold lot
                         // to auction owner
                         transfer::<Environment>(to, bal).unwrap();
                     }
@@ -358,10 +357,10 @@ mod candle_auction {
             match self.subject {
                 0 => Subject::NFTs,
                 1 => Subject::Domain(self.domain),
-                _ => panic!("Current Subject is not supported!")
+                _ => panic!("Current Subject is not supported!"),
             }
         }
-        
+
         /// Message to get the status of the auction given the current block number.
         #[ink(message)]
         pub fn get_status(&self) -> Status {
@@ -798,7 +797,6 @@ mod candle_auction {
                 .unwrap()
                 .bob;
 
-
             // Charlie sets up an auction
             set_sender::<Environment>(charlie, 1000);
             let mut auction = CandleAuction::new(
@@ -905,7 +903,6 @@ mod candle_auction {
             );
 
             assert_eq!(auction_no_domain.domain, Hash::clear());
-
         }
     }
 }
