@@ -96,6 +96,8 @@ mod candle_auction {
         /// *winning* <bidder> = current top bidder.  
         /// Not to be confused with *winner* = bidder who finally won.   
         winning: Option<AccountId>,
+        // winner (with bid) who finally won Candle auction
+        winner: Option<(AccountId, Balance)>,
         /// WinningData = storage of winners per sample (block)
         /// it's a vector of optional (AccountId, Balance) tuples representing winner in block (sample) along with her bid
         /// 0-indexed value is winner for OpeningPeriod
@@ -148,6 +150,7 @@ mod candle_auction {
                 ending_period,
                 balances: StorageHashMap::new(),
                 winning: None,
+                winner: None,
                 winning_data,
                 reward_contract_address,
                 subject,
@@ -391,7 +394,7 @@ mod candle_auction {
         /// 1. Easy lvl: use ink_env::random
         /// TODO: 2. Intermediate lvl: use chain extension like in ink rand-extension example
         /// TODO: this sould be invoked automatically? or not? maybe not, but once
-        pub fn get_candle_winner(&self) -> Option<(AccountId, Balance)> {
+        pub fn get_candle_winner(&mut self) -> Option<(AccountId, Balance)> {
             // TODO: we use final top bid amount as the input buffer to `random()` func
             // for additional hash randomization
             // let mut winning_balance = 0;
@@ -415,6 +418,11 @@ mod candle_auction {
 
                     // detect the block when 'the candle went out' in Ending Period
                     let offset = raw_offset_block_number % self.ending_period + 1;
+                    // TODO: emit event WinningOffset
+                    // self.env().emit_event(Bid {
+                    //     from: bidder,
+                    //     bid: bid,
+                    // });
 
                     // Detect winner.
                     // Starting from `candle-detected` block,
@@ -423,16 +431,12 @@ mod candle_auction {
                     for i in (1..offset + 1).rev() {
                         if let Some((w, b)) = self.winning_data.get(i).unwrap() {
                             win_data = Some((*w, *b));
+                            self.winner = win_data;
                             break;
                         }
                     }
 
                     return win_data;
-                    // TODO: emit event WinningOffset
-                    // self.env().emit_event(Bid {
-                    //     from: bidder,
-                    //     bid: bid,
-                    // });
                 }
             }
             None
@@ -710,42 +714,6 @@ mod candle_auction {
         }
 
         #[ink::test]
-        fn no_noncandle_winner_until_ended() {
-            // given
-            // Alice and Bob
-            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .alice;
-            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .bob;
-            // and an auction
-            let mut auction = CandleAuction::new(
-                None,
-                5,
-                10,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-            // when
-            // auction starts
-            run_to_block::<Environment>(1);
-            // Alice bids 100
-            set_sender::<Environment>(alice, 100);
-            auction.bid();
-
-            run_to_block::<Environment>(15);
-            // Bob bids 101
-            set_sender::<Environment>(bob, 101);
-            auction.bid();
-
-            // then
-            // no winner yet determined
-            assert_eq!(auction.get_noncandle_winner(), None);
-        }
-
-        #[ink::test]
         fn winning_data_constructed_correctly() {
             // given
             // an auction with the following structure:
@@ -833,11 +801,180 @@ mod candle_auction {
             );
         }
 
+        #[ink::test]
+        fn no_winner_until_ended() {
+            // given
+            // Alice and Bob
+            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                .unwrap()
+                .alice;
+            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                .unwrap()
+                .bob;
+            // and an auction
+            let mut auction = CandleAuction::new(
+                None,
+                5,
+                10,
+                0,
+                Hash::clear(),
+                AccountId::from(DEFAULT_CALLEE_HASH),
+            );
+            // when
+            // auction starts
+            run_to_block::<Environment>(1);
+            // Alice bids 100
+            set_sender::<Environment>(alice, 100);
+            auction.bid();
+
+            run_to_block::<Environment>(15);
+            // Bob bids 101
+            set_sender::<Environment>(bob, 101);
+            auction.bid();
+
+            // then
+            // no winner yet determined
+            assert_eq!(auction.get_candle_winner(), None);
+        }
+
+        #[ink::test]
+        fn winner_is_random_and_no_override() {
+            // given
+            // an auction with the following structure:
+            //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
+            //     | opening  |        ending         |
+            let mut auction = CandleAuction::new(
+                Some(2),
+                4,
+                7,
+                0,
+                Hash::clear(),
+                AccountId::from(DEFAULT_CALLEE_HASH),
+            );
+
+            // Alice and Bob
+            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                .unwrap()
+                .alice;
+            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                .unwrap()
+                .bob;
+
+
+            // when
+            // there are bids in opening period
+            run_to_block::<Environment>(3);
+            // Alice bids 100
+            set_sender::<Environment>(alice, 100);
+            auction.bid();
+
+            run_to_block::<Environment>(5);
+            // Bob bids 100
+            set_sender::<Environment>(bob, 101);
+            auction.bid();
+
+            // when
+            // bids added in Ending Period
+            run_to_block::<Environment>(7);
+            // Alice bids 102
+            set_sender::<Environment>(alice, 2);
+            auction.bid();
+
+            run_to_block::<Environment>(9);
+            // Bob bids 103
+            set_sender::<Environment>(bob, 2);
+            auction.bid();
+
+            run_to_block::<Environment>(11);
+            // Alice bids 104
+            set_sender::<Environment>(alice, 2);
+            auction.bid();
+
+            // auction ends
+            run_to_block::<Environment>(13);
+
+            // auction.winning_data:
+            //     [
+            //         Some((bob, 101)),
+            //         None,
+            //         Some((alice, 102)),
+            //         None,
+            //         Some((bob, 103)),
+            //         None,
+            //         Some((alice, 104)),
+            //         None
+            //     ]
+
+            // then 
+            // candle winner is detected
+            let w1 = auction.get_candle_winner().unwrap();
+            auction.winner.expect("Candle winner SHOULD be detected!");
+
+            // and
+            // winner detection is likely to be randomized:
+            //   should be 4^-10 ~ less than _one in a million_ chance 
+            //   that candle selects the same 1 out of 4 bids
+            //   all 10 times in a row 
+            let mut candles = Vec::<(AccountId,Balance)>::new();
+            candles.push(w1);
+            for i in 1..10 {
+                run_to_block::<Environment>(13+i);
+                let w = auction.get_candle_winner().unwrap();
+                candles.push(w);
+                // and 
+                // winner cannot be overriden
+                if w != w1 {
+                    assert_ne!(auction.winner.unwrap(),w, "winner cannot be overriden!");
+                }
+            }
+            // this one can fail once in 1048576 times:
+            assert_ne!(candles,[w1; 10].iter().map(|o| *o).collect::<Vec::<(AccountId,Balance)>>(), "candle should be random!");
+        }
+        // Candle test cases:
+        // cannot:
+        //  1. get winner until ended (V)
+        //  2. override the winner (V)
+        
+        // should:
+        //  3. if all but 1 None -> winner is 1
+        //  4. (very likely) (V)
+        // also:
+        //  5. reward should payback difference between won bid and balance, to winner 
+        // #[ink::test]
+        // fn 
+
+        #[ink::test]
+        fn dns_auction_new_works() {
+            let auction_with_domain = CandleAuction::new(
+                Some(10),
+                5,
+                10,
+                1,
+                Hash::from([0x99; 32]),
+                AccountId::from(DEFAULT_CALLEE_HASH),
+            );
+            assert_eq!(auction_with_domain.start_block, 10);
+            assert_eq!(auction_with_domain.domain, Hash::from([0x99; 32]));
+            assert_eq!(auction_with_domain.get_status(), Status::NotStarted);
+
+            let auction_no_domain = CandleAuction::new(
+                Some(10),
+                5,
+                10,
+                1,
+                Hash::clear(),
+                AccountId::from(DEFAULT_CALLEE_HASH),
+            );
+
+            assert_eq!(auction_no_domain.domain, Hash::clear());
+        }
+
         // We can't check that winner get rewarded in offchain tests,
         // as it requires cross-contract calling.
         // Hence we check here just that the winner is determined
         // and the looser can get his bidded amount back
         #[ink::test]
+        #[ignore = "obsolete non-candle test"]
         fn noncandle_win_and_payout_work() {
             // given
             // Charlie is auction owner
@@ -935,29 +1072,41 @@ mod candle_auction {
         }
 
         #[ink::test]
-        fn dns_auction_new_works() {
-            let auction_with_domain = CandleAuction::new(
-                Some(10),
+        #[ignore = "obsolete non-candle test"]
+        fn no_noncandle_winner_until_ended() {
+            // given
+            // Alice and Bob
+            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                .unwrap()
+                .alice;
+            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                .unwrap()
+                .bob;
+            // and an auction
+            let mut auction = CandleAuction::new(
+                None,
                 5,
                 10,
-                1,
-                Hash::from([0x99; 32]),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-            assert_eq!(auction_with_domain.start_block, 10);
-            assert_eq!(auction_with_domain.domain, Hash::from([0x99; 32]));
-            assert_eq!(auction_with_domain.get_status(), Status::NotStarted);
-
-            let auction_no_domain = CandleAuction::new(
-                Some(10),
-                5,
-                10,
-                1,
+                0,
                 Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
+            // when
+            // auction starts
+            run_to_block::<Environment>(1);
+            // Alice bids 100
+            set_sender::<Environment>(alice, 100);
+            auction.bid();
 
-            assert_eq!(auction_no_domain.domain, Hash::clear());
+            run_to_block::<Environment>(15);
+            // Bob bids 101
+            set_sender::<Environment>(bob, 101);
+            auction.bid();
+
+            // then
+            // no winner yet determined
+            assert_eq!(auction.get_noncandle_winner(), None);
         }
+
     }
 }
