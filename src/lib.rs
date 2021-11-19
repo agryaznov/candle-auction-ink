@@ -13,7 +13,8 @@ mod candle_auction {
     };
     use ink_storage::collections::HashMap as StorageHashMap;
     use ink_storage::Vec as StorageVec;
-    use scale::Encode;
+    use scale::{Encode, Decode};
+    // use parity_scale_codec::Decode
 
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
@@ -374,7 +375,7 @@ mod candle_auction {
             self.get_noncandle_winner()
         }
 
-        /// Message to get auction winner in noncandle fashion.  
+        /// Helper to get the auction winner in noncandle fashion.  
         /// To avoid ambiguity, winner is determined once the auction ended.  
         pub fn get_noncandle_winner(&self) -> Option<AccountId> {
             if self.get_status() == Status::Ended {
@@ -383,6 +384,60 @@ mod candle_auction {
                 None
             }
         }
+
+        /// Helper to get the Candle auction winner: 
+        ///  Get random block in Ending period,  
+        ///  then get the highest bidder in that block
+        /// 1. Easy lvl: use ink_env::random
+        /// TODO: 2. Intermediate lvl: use chain extension like in ink rand-extension example 
+        /// TODO: this sould be invoked automatically? or not? maybe not, but once
+        pub fn get_candle_winner(&self) -> Option<(AccountId,Balance)> {
+            // TODO: we use final top bid amount as the input buffer to `random()` func   
+            // for additional hash randomization
+            // let mut winning_balance = 0;
+            // if let Some(winning) = self.winning {
+            //     winning_balance = *self.balances.get(&winning).unwrap_or(&0);
+            // }    
+            if self.get_status() == Status::Ended { // TODO: 1. and candle winner hasn't defined yet 2. if there is no winner => there is no candle winner!
+                let opening_period_last_block = self.start_block + self.opening_period - 1;
+                let ending_period_last_block = opening_period_last_block + self.ending_period;
+    
+                let (raw_offset, known_since): (Hash, BlockNumber) = ink_env::random(&b"candle_auction"[..])
+                                                    .expect("cannot get randomness!");
+                if ending_period_last_block < known_since {
+                    // (Inspired by: 
+                    //   https://github.com/paritytech/polkadot/blob/v0.9.13-rc1/runtime/common/src/auctions.rs#L526)
+                    // Our random seed was known only after the auction ended. Good to use.
+					let raw_offset_block_number = <BlockNumber>::decode(
+						&mut raw_offset.as_ref(),
+					)
+					.expect("secure hashes should always be bigger than the block number; qed");
+
+                    // detect the block when 'the candle went out' in Ending Period
+                    let offset = raw_offset_block_number % self.ending_period + 1;
+
+                    // Detect winner.
+                    // Starting from `candle-detected` block,  
+                    // iterate backwards until a block with bids found
+                    let mut win_data: Option<(AccountId,Balance)> = None;
+                    for data in self.winning_data.iter().take(usize::try_from(offset).unwrap()).rev() {
+                        if let Some(_) = data {
+                            win_data = data;   
+                            break;
+                        }
+                    }
+
+                    return win_data;
+                    // TODO: emit event WinningOffset
+                    // self.env().emit_event(Bid {
+                    //     from: bidder,
+                    //     bid: bid,
+                    // });
+                }
+            }
+            None
+        }
+
         /// Message to place a bid.  
         /// An account can bid by sending the lacking amount so that total amount she sent to this contract covers the bid.  
         /// In any particual point of time, the user's top bid is equal to total balance she have sent to the contract.
