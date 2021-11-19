@@ -388,6 +388,46 @@ mod candle_auction {
             }
         }
 
+
+        /// Retrospectively RANDOM `candle blowing`:
+        ///  `seed` buffer is used for 
+        ///  additional hash randomization
+        fn blow_candle(&self, seed: &[u8]) -> Option<(AccountId, Balance)> {
+            let opening_period_last_block = self.start_block + self.opening_period - 1;
+            let ending_period_last_block = opening_period_last_block + self.ending_period;
+
+            let (raw_offset, known_since): (Hash, BlockNumber) =
+                ink_env::random::<Environment>(seed)
+                    .expect("cannot get randomness!");
+            if ending_period_last_block <= known_since {
+                // (Inspired by:
+                //   https://github.com/paritytech/polkadot/blob/v0.9.13-rc1/runtime/common/src/auctions.rs#L526)
+                // Our random seed was known only after the auction ended. Good to use.
+                let raw_offset_block_number = <BlockNumber>::decode(&mut raw_offset.as_ref())
+                    .expect("secure hashes should always be bigger than the block number; qed");
+
+                // detect the block when 'the candle went out' in Ending Period
+                let offset = raw_offset_block_number % self.ending_period + 1;
+                // TODO: emit event WinningOffset
+                // self.env().emit_event(Bid {
+                //     from: bidder,
+                //     bid: bid,
+                // });
+
+                // Detect winning slot.
+                // Starting from `candle-detected` block,
+                // iterate backwards until a block with some bids found
+                let mut win_data: Option<(AccountId, Balance)> = None;
+                for i in (1..offset + 1).rev() {
+                    if let Some((w, b)) = self.winning_data.get(i).unwrap() {
+                        win_data = Some((*w, *b));
+                        break;
+                    }
+                }
+                return win_data;
+            }
+            None
+        }
         /// Helper to get the Candle auction winner:
         ///  Get random block in Ending period,  
         ///  then get the highest bidder in that block
@@ -395,49 +435,21 @@ mod candle_auction {
         /// TODO: 2. Intermediate lvl: use chain extension like in ink rand-extension example
         /// TODO: this sould be invoked automatically? or not? maybe not, but once
         pub fn get_candle_winner(&mut self) -> Option<(AccountId, Balance)> {
-            // TODO: we use final top bid amount as the input buffer to `random()` func
-            // for additional hash randomization
             // let mut winning_balance = 0;
             // if let Some(winning) = self.winning {
             //     winning_balance = *self.balances.get(&winning).unwrap_or(&0);
             // }
+
+            // TODO: if there is no `basic` winner => there couldn't be a candle winner
             if self.get_status() == Status::Ended {
-                // TODO: 1. and candle winner hasn't defined yet 2. if there is no winner => there is no candle winner!
-                let opening_period_last_block = self.start_block + self.opening_period - 1;
-                let ending_period_last_block = opening_period_last_block + self.ending_period;
-
-                let (raw_offset, known_since): (Hash, BlockNumber) =
-                    ink_env::random::<Environment>(&b"candle_auction"[..])
-                        .expect("cannot get randomness!");
-                if ending_period_last_block < known_since {
-                    // (Inspired by:
-                    //   https://github.com/paritytech/polkadot/blob/v0.9.13-rc1/runtime/common/src/auctions.rs#L526)
-                    // Our random seed was known only after the auction ended. Good to use.
-                    let raw_offset_block_number = <BlockNumber>::decode(&mut raw_offset.as_ref())
-                        .expect("secure hashes should always be bigger than the block number; qed");
-
-                    // detect the block when 'the candle went out' in Ending Period
-                    let offset = raw_offset_block_number % self.ending_period + 1;
-                    // TODO: emit event WinningOffset
-                    // self.env().emit_event(Bid {
-                    //     from: bidder,
-                    //     bid: bid,
-                    // });
-
-                    // Detect winner.
-                    // Starting from `candle-detected` block,
-                    // iterate backwards until a block with bids found
-                    let mut win_data: Option<(AccountId, Balance)> = None;
-                    for i in (1..offset + 1).rev() {
-                        if let Some((w, b)) = self.winning_data.get(i).unwrap() {
-                            win_data = Some((*w, *b));
-                            self.winner = win_data;
-                            break;
-                        }
-                    }
-
-                    return win_data;
+                // if winner already defined => just return
+                if let Some(winner) = self.winner {
+                    return Some(winner)
                 }
+                
+                // detect winner by random candle blowing
+                self.winner = self.blow_candle(&b"blabla"[..]);
+                return self.winner;
             }
             None
         }
@@ -860,7 +872,6 @@ mod candle_auction {
                 .unwrap()
                 .bob;
 
-
             // when
             // there are bids in opening period
             run_to_block::<Environment>(3);
@@ -919,13 +930,11 @@ mod candle_auction {
             candles.push(w1);
             for i in 1..10 {
                 run_to_block::<Environment>(13+i);
-                let w = auction.get_candle_winner().unwrap();
-                candles.push(w);
+                // this one fails in 50% test runs because of not enough known_since block randomization 
+                candles.push(auction.blow_candle(&b"blablabla"[..]).unwrap());
                 // and 
                 // winner cannot be overriden
-                if w != w1 {
-                    assert_ne!(auction.winner.unwrap(),w, "winner cannot be overriden!");
-                }
+                assert_eq!(auction.winner.unwrap(),auction.get_candle_winner().unwrap());
             }
             // this one can fail once in 1048576 times:
             assert_ne!(candles,[w1; 10].iter().map(|o| *o).collect::<Vec::<(AccountId,Balance)>>(), "candle should be random!");
