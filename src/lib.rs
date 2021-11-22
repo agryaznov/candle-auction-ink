@@ -19,7 +19,7 @@ mod candle_auction {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     /// Error types
     pub enum Error {
-        /// Returned if bidding whilr auction isn't in active status
+        /// Returned if bidding while auction isn't in active status
         AuctionNotActive,
         /// Placed bid_new isn't outbidding current winning nid_quo
         /// (bid_new, bid_quo) returned for info
@@ -89,11 +89,11 @@ mod candle_auction {
         /// The number of blocks of Ending period, over which an auction may be retroactively ended.
         /// We assume this period starts right after Opening perid ends.
         ending_period: BlockNumber,
-        /// Bidders balances storage.  
+        /// Bidders balances storage.
         /// Current user's balance = her top bid
         balances: StorageHashMap<AccountId, Balance>,
-        /// *winning* <bidder> = current top bidder.  
-        /// Not to be confused with *winner* = bidder who finally won.   
+        /// *winning* <bidder> = current top bidder.
+        /// Not to be confused with *winner* = bidder who finally won.
         winning: Option<AccountId>,
         /// WinningData = storage of winners per sample (block)
         /// it's a vector of optional (AccountId, Balance) tuples representing winner in block (sample) along with her bid
@@ -113,9 +113,9 @@ mod candle_auction {
     }
 
     impl CandleAuction {
-        /// Auction constructor.  
-        /// Initializes the start_block to next block (if not set).  
-        /// If start_block is set, checks it is in the future (to prevent backdating).  
+        /// Auction constructor.
+        /// Initializes the start_block to next block (if not set).
+        /// If start_block is set, checks it is in the future (to prevent backdating).
         #[ink(constructor)]
         pub fn new(
             start_block: Option<BlockNumber>,
@@ -263,7 +263,7 @@ mod candle_auction {
             }
         }
 
-        /// Cross contract invocation method  
+        /// Cross contract invocation method
         /// common for both rewarding methods
         fn invoke_contract<Args>(&self, contract: AccountId, input: ExecutionInput<Args>)
         where
@@ -303,19 +303,19 @@ mod candle_auction {
             }
         }
 
-        /// Pluggable reward logic: OPTION-1.    
-        /// Reward with NFT(s) (ERC721).  
+        /// Pluggable reward logic: OPTION-1.
+        /// Reward with NFT(s) (ERC721).
         /// Contract rewards an auction winner by giving her approval to transfer
-        /// ERC721 tokens on behalf of the auction contract.  
+        /// ERC721 tokens on behalf of the auction contract.
         ///
-        /// DESIGN DECISION: we call ERC721 set_approval_for_all() instead of approve() for  
-        ///  1. the sake of simplicity, no need to specify TokenID  
-        ///     as we need to send this token to the contract anyway,  _ater_ instantiation
+        /// DESIGN DECISION: we call ERC721 set_approval_for_all() instead of approve() for
+        ///  1. the sake of simplicity, no need to specify TokenID
+        ///     as we need to send this token to the contract anyway,  _after_ instantiation
         ///     but still _before_ auctions starts
         ///  2. this allows to set auction for collection of tokens instead of just for one thing
         ///
-        /// Cross conract call to ERC721 set_approval_for_all() method  
-        /// which is expected to have the selector: 0xFEEDBABE   
+        /// Cross conract call to ERC721 set_approval_for_all() method
+        /// which is expected to have the selector: 0xFEEDBABE
         fn give_nft(&self, to: AccountId) {
             let selector = Selector::new([0xFE, 0xED, 0xBA, 0xBE]);
             let input = ExecutionInput::new(selector).push_arg(to).push_arg(true);
@@ -329,13 +329,13 @@ mod candle_auction {
             });
         }
 
-        /// Pluggable reward logic: OPTION-2.    
-        /// Reward with domain name.  
+        /// Pluggable reward logic: OPTION-2.
+        /// Reward with domain name.
         /// Contract rewards an auction winner by transferring her auctioned
         /// domain name using the dns contract.
         ///
-        /// Cross conract call to ERC721 set_approval_for_all() method,  
-        /// which is expected to have the selector: 0xFEEDDEED   
+        /// Cross conract call to ERC721 set_approval_for_all() method,
+        /// which is expected to have the selector: 0xFEEDDEED
         fn give_domain(&self, to: AccountId) {
             let selector = Selector::new([0xFE, 0xED, 0xDE, 0xED]);
             let input = ExecutionInput::new(selector)
@@ -374,8 +374,8 @@ mod candle_auction {
             self.get_noncandle_winner()
         }
 
-        /// Message to get auction winner in noncandle fashion.  
-        /// To avoid ambiguity, winner is determined once the auction ended.  
+        /// Message to get auction winner in noncandle fashion.
+        /// To avoid ambiguity, winner is determined once the auction ended.
         pub fn get_noncandle_winner(&self) -> Option<AccountId> {
             if self.get_status() == Status::Ended {
                 self.winning
@@ -383,8 +383,8 @@ mod candle_auction {
                 None
             }
         }
-        /// Message to place a bid.  
-        /// An account can bid by sending the lacking amount so that total amount she sent to this contract covers the bid.  
+        /// Message to place a bid.
+        /// An account can bid by sending the lacking amount so that total amount she sent to this contract covers the bid.
         /// In any particual point of time, the user's top bid is equal to total balance she have sent to the contract.
         #[ink(message, payable)]
         pub fn bid(&mut self) {
@@ -405,7 +405,7 @@ mod candle_auction {
             }
         }
 
-        /// Message to claim the payout.  
+        /// Message to claim the payout.
         #[ink(message)]
         pub fn payout(&mut self) {
             const REWARD_METHODS: [fn(&CandleAuction, to: AccountId); 2] =
