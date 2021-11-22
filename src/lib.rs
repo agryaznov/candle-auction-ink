@@ -204,6 +204,8 @@ mod candle_auction {
                 }
             }
 
+            // TODO: check whether we're not out-bidding ourselves?
+
             // finally, accept bid
             self.balances.insert(bidder, bid);
             self.winning = Some(bidder);
@@ -254,7 +256,12 @@ mod candle_auction {
                 }
             }
 
-            // pay the looser his bidded amount back
+            // pay the loser his bid amount back
+            // TODO: shouldn't we handle multiple accounts here? I guess the
+            // simplest case is when you have two bidders: this is handled. But
+            // what about the case when >2 bidders are participating? I believe
+            // that with the current logic only the 2nd participant will get
+            // their money back, the rest will lose it forever?
             let bal = self.balances.take(&to).unwrap();
             // zero-balance check: bid 0 is possible, but nothing to pay back
             if bal > 0 {
