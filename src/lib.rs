@@ -390,9 +390,8 @@ mod candle_auction {
 
 
         /// Retrospective RANDOM `candle blowing`:  
-        ///  `seed` buffer is used for
-        ///  additional hash randomization.  
-        /// Returns a record from `winning_data` determined randomly by `candle blow`
+        ///  `seed` buffer is used for additional hash randomization.  
+        /// Returns a record from `winning_data` determined randomly by imitated `candle blow`
         fn blow_candle(&self, seed: &[u8]) -> Option<(AccountId, Balance)> {
             let opening_period_last_block = self.start_block + self.opening_period - 1;
             let ending_period_last_block = opening_period_last_block + self.ending_period;
@@ -433,23 +432,24 @@ mod candle_auction {
         /// Helper to get the Candle auction winner:
         ///  Get random block in Ending period,  
         ///  then get the highest bidder in that block
-        /// 1. Easy lvl: use ink_env::random
+        /// 1. [done] Easy lvl: use ink_env::random
         /// TODO: 2. Intermediate lvl: use chain extension like in ink rand-extension example
+        ///          -> impl an Entropy Trait in separate crate Randomness
+        ///          in it, impl fn random which calls ink_env::random, but could be any other (e.g. random_ext)
         /// TODO: this sould be invoked automatically? or not? maybe not, but once
+        ///    making whis call by account (non auto) brings some more entropy in sense which 
+        ///    on what exact block this wouls be called (results of random func will be different)
         pub fn get_candle_winner(&mut self) -> Option<(AccountId, Balance)> {
-            // let mut winning_balance = 0;
-            // if let Some(winning) = self.winning {
-            //     winning_balance = *self.balances.get(&winning).unwrap_or(&0);
-            // }
-
-            // TODO: if there is no `basic` winner => there couldn't be a candle winner
-            if self.get_status() == Status::Ended {
+            // To get winner by candle:  
+            //   1. Auction should be Ended;
+            //   2. [optimisation] There should be (at least one) winning candidate 
+            if (self.get_status() == Status::Ended) && (self.winning.is_some()) {
                 // if winner already defined => just return her
                 if let Some(winner) = self.winner {
                     return Some(winner)
                 }
                 
-                // detect winner by random candle blowing
+                // Determine winner by random candle blowing
                 // additional random source = caller address used as seed  
                 self.winner = self.blow_candle(Self::env().caller().as_ref());
                 return self.winner;
