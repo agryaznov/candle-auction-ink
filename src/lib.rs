@@ -255,7 +255,7 @@ mod candle_auction {
                 "Auction is not Ended, no payback is possible!"
             );
 
-            if let Some(winner) = self.get_winner() {
+            if let Some((winner,_)) = self.get_winner() {
                 // winner gets her reward
                 if to == winner {
                     // reward winner with specified reward method call
@@ -371,32 +371,10 @@ mod candle_auction {
             });
         }
 
-        /// Message to get the auction subject.
-        #[ink(message)]
-        pub fn get_subject(&self) -> Subject {
-            match self.subject {
-                0 => Subject::NFTs,
-                1 => Subject::Domain(self.domain),
-                _ => panic!("Current Subject is not supported!"),
-            }
-        }
-
-        /// Message to get the status of the auction given the current block number.
-        #[ink(message)]
-        pub fn get_status(&self) -> Status {
-            let now = self.env().block_number();
-            self.status(now)
-        }
-
-        #[ink(message)]
-        pub fn get_winner(&self) -> Option<AccountId> {
-            // temporary same as noncandle
-            self.get_noncandle_winner()
-        }
 
         /// Helper to get the auction winner in noncandle fashion.  
         /// To avoid ambiguity, winner is determined once the auction ended.  
-        pub fn get_noncandle_winner(&self) -> Option<AccountId> {
+        fn get_noncandle_winner(&self) -> Option<AccountId> {
             if self.get_status() == Status::Ended {
                 self.winning
             } else {
@@ -443,17 +421,9 @@ mod candle_auction {
             }
             None
         }
-        /// Helper to get the Candle auction winner:
-        ///  Get random block in Ending period,  
-        ///  then get the highest bidder in that block
-        /// 1. [done] Easy lvl: use ink_env::random
-        /// TODO: 2. Intermediate lvl: use chain extension like in ink rand-extension example
-        ///          -> impl an Entropy Trait in separate crate Randomness
-        ///          in it, impl fn random which calls ink_env::random, but could be any other (e.g. random_ext)
-        /// TODO: this sould be invoked automatically? or not? maybe not, but once
-        ///    making whis call by account (non auto) brings some more entropy in sense which
-        ///    on what exact block this wouls be called (results of random func will be different)
-        pub fn get_candle_winner(&mut self) -> Option<(AccountId, Balance)> {
+
+        /// Helper to determine the Candle auction winner:
+        fn detect_winner(&mut self) -> Option<(AccountId, Balance)> {
             // To get winner by candle:
             //   1. Auction should be Ended;
             //   2. [optimization] There should be (at least one) winning candidate
@@ -476,6 +446,38 @@ mod candle_auction {
                 return self.winner;
             }
             None
+        }
+
+        /// Message to get the auction subject.
+        #[ink(message)]
+        pub fn get_subject(&self) -> Subject {
+            match self.subject {
+                0 => Subject::NFTs,
+                1 => Subject::Domain(self.domain),
+                _ => panic!("Current Subject is not supported!"),
+            }
+        }
+
+        /// Message to get the status of the auction given the current block number.
+        #[ink(message)]
+        pub fn get_status(&self) -> Status {
+            let now = self.env().block_number();
+            self.status(now)
+        }
+
+        /// Message to determinate winner by candle.  
+        /// Gets random block in Ending period,  
+        /// then gets the highest bidder in that block
+        #[ink(message)]
+        pub fn find_winner(&mut self) -> Option<(AccountId, Balance)> {
+            self.detect_winner()
+        }
+
+        /// Message to return winner.
+        /// Winner would be None until someone invokes `find_winner()`
+        #[ink(message)]
+        pub fn get_winner(&self) -> Option<(AccountId, Balance)> {
+            self.winner
         }
 
         /// Message to place a bid.  
@@ -870,7 +872,7 @@ mod candle_auction {
 
             // then
             // no winner yet determined
-            assert_eq!(auction.get_candle_winner(), None);
+            assert_eq!(auction.detect_winner(), None);
         }
 
         #[ink::test]
@@ -942,7 +944,7 @@ mod candle_auction {
 
             // then
             // candle winner is detected
-            let w1 = auction.get_candle_winner().unwrap();
+            let w1 = auction.detect_winner().unwrap();
             auction.winner.expect("Candle winner SHOULD be detected!");
 
             // and
@@ -960,7 +962,7 @@ mod candle_auction {
                 // winner cannot be overriden
                 assert_eq!(
                     auction.winner.unwrap(),
-                    auction.get_candle_winner().unwrap()
+                    auction.detect_winner().unwrap()
                 );
             }
             // this one can fail once in 1048576 times:
