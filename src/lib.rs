@@ -20,7 +20,7 @@ mod candle_auction {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     /// Error types
     pub enum Error {
-        /// Returned if bidding whilr auction isn't in active status
+        /// Returned if bidding while auction isn't in active status
         AuctionNotActive,
         /// Placed bid_new isn't outbidding current winning nid_quo
         /// (bid_new, bid_quo) returned for info
@@ -258,7 +258,7 @@ mod candle_auction {
                 }
             }
 
-            // pay the looser his bidded amount back
+            // pay the loser his bid amount back
             let bal = self.balances.take(&to).unwrap();
             // zero-balance check: bid 0 is possible, but nothing to pay back
             if bal > 0 {
@@ -314,7 +314,7 @@ mod candle_auction {
         ///
         /// DESIGN DECISION: we call ERC721 set_approval_for_all() instead of approve() for  
         ///  1. the sake of simplicity, no need to specify TokenID  
-        ///     as we need to send this token to the contract anyway,  _ater_ instantiation
+        ///     as we need to send this token to the contract anyway,  _after_ instantiation
         ///     but still _before_ auctions starts
         ///  2. this allows to set auction for collection of tokens instead of just for one thing
         ///
