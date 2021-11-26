@@ -5,6 +5,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 use ink_lang as ink;
 
+// randomness source
+mod entropy;
+
 #[ink::contract]
 mod candle_auction {
     use ink_env::{
@@ -388,7 +391,6 @@ mod candle_auction {
             }
         }
 
-
         /// Retrospective RANDOM `candle blowing`:  
         ///  `seed` buffer is used for additional hash randomization.  
         /// Returns a record from `winning_data` determined randomly by imitated `candle blow`
@@ -398,8 +400,7 @@ mod candle_auction {
 
             // Here is where we use Random func
             let (raw_offset, known_since): (Hash, BlockNumber) =
-                ink_env::random::<Environment>(seed)
-                    .expect("cannot get randomness!");
+                crate::entropy::random::<Environment>(seed);
             if ending_period_last_block <= known_since {
                 // (Inspired by:
                 //   https://github.com/paritytech/polkadot/blob/v0.9.13-rc1/runtime/common/src/auctions.rs#L526)
@@ -437,20 +438,20 @@ mod candle_auction {
         ///          -> impl an Entropy Trait in separate crate Randomness
         ///          in it, impl fn random which calls ink_env::random, but could be any other (e.g. random_ext)
         /// TODO: this sould be invoked automatically? or not? maybe not, but once
-        ///    making whis call by account (non auto) brings some more entropy in sense which 
+        ///    making whis call by account (non auto) brings some more entropy in sense which
         ///    on what exact block this wouls be called (results of random func will be different)
         pub fn get_candle_winner(&mut self) -> Option<(AccountId, Balance)> {
-            // To get winner by candle:  
+            // To get winner by candle:
             //   1. Auction should be Ended;
-            //   2. [optimisation] There should be (at least one) winning candidate 
+            //   2. [optimisation] There should be (at least one) winning candidate
             if (self.get_status() == Status::Ended) && (self.winning.is_some()) {
                 // if winner already defined => just return her
                 if let Some(winner) = self.winner {
-                    return Some(winner)
+                    return Some(winner);
                 }
-                
+
                 // Determine winner by random candle blowing
-                // additional random source = caller address used as seed  
+                // additional random source = caller address used as seed
                 self.winner = self.blow_candle(Self::env().caller().as_ref());
                 return self.winner;
             }
@@ -919,41 +920,51 @@ mod candle_auction {
             //         None
             //     ]
 
-            // then 
+            // then
             // candle winner is detected
             let w1 = auction.get_candle_winner().unwrap();
             auction.winner.expect("Candle winner SHOULD be detected!");
 
             // and
             // winner detection is likely to be randomized:
-            //   should be 4^-10 ~ less than _one in a million_ chance 
+            //   should be 4^-10 ~ less than _one in a million_ chance
             //   that candle selects the same 1 out of 4 bids
-            //   all 10 times in a row 
-            let mut candles = Vec::<(AccountId,Balance)>::new();
+            //   all 10 times in a row
+            let mut candles = Vec::<(AccountId, Balance)>::new();
             candles.push(w1);
             for i in 1..10 {
-                run_to_block::<Environment>(13+i);
-                // this one fails in 50% test runs because of not enough known_since block randomization 
+                run_to_block::<Environment>(13 + i);
+                // this one fails in 50% test runs because of not enough known_since block randomization
                 candles.push(auction.blow_candle(&b"blablabla"[..]).unwrap());
-                // and 
+                // and
                 // winner cannot be overriden
-                assert_eq!(auction.winner.unwrap(),auction.get_candle_winner().unwrap());
+                assert_eq!(
+                    auction.winner.unwrap(),
+                    auction.get_candle_winner().unwrap()
+                );
             }
             // this one can fail once in 1048576 times:
-            assert_ne!(candles,[w1; 10].iter().map(|o| *o).collect::<Vec::<(AccountId,Balance)>>(), "candle should be random!");
+            assert_ne!(
+                candles,
+                [w1; 10]
+                    .iter()
+                    .map(|o| *o)
+                    .collect::<Vec::<(AccountId, Balance)>>(),
+                "candle should be random!"
+            );
         }
         // Candle test cases:
         // cannot:
         //  1. get winner until ended (V)
         //  2. override the winner (V)
-        
+
         // should:
         //  3. if all but 1 None -> winner is 1
         //  4. (very likely) (V)
         // also:
-        //  5. reward should payback difference between won bid and balance, to winner 
+        //  5. reward should payback difference between won bid and balance, to winner
         // #[ink::test]
-        // fn 
+        // fn
 
         #[ink::test]
         fn dns_auction_new_works() {
@@ -1119,6 +1130,5 @@ mod candle_auction {
             // no winner yet determined
             assert_eq!(auction.get_noncandle_winner(), None);
         }
-
     }
 }
