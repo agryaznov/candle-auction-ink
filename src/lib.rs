@@ -69,6 +69,19 @@ mod candle_auction {
         bid: Balance,
     }
 
+    /// Event emitted when Winning block is detected.
+    #[ink(event)]
+    pub struct WinningOffset {
+        offset: BlockNumber,
+    }
+
+    /// Event emitted when a winner is detected.
+    #[ink(event)]
+    pub struct Winner {
+        account: AccountId,
+        bid: Balance,
+    }
+
     /// Event emitted when the auction winner is rewarded.
     #[ink(event)]
     pub struct Reward {
@@ -410,12 +423,11 @@ mod candle_auction {
 
                 // detect the block when 'the candle went out' in Ending Period
                 let offset = raw_offset_block_number % self.ending_period + 1;
-                // TODO: emit event WinningOffset
-                // self.env().emit_event(Bid {
-                //     from: bidder,
-                //     bid: bid,
-                // });
-
+                
+                // emit Winning Offset event 
+                self.env().emit_event(WinningOffset {
+                    offset: offset
+                });
                 // Detect winning slot.
                 // Starting from the `candle-determined` block,
                 // iterate backwards until a block with some bids found
@@ -426,6 +438,7 @@ mod candle_auction {
                         break;
                     }
                 }
+                
                 return win_data;
             }
             None
@@ -443,7 +456,7 @@ mod candle_auction {
         pub fn get_candle_winner(&mut self) -> Option<(AccountId, Balance)> {
             // To get winner by candle:
             //   1. Auction should be Ended;
-            //   2. [optimisation] There should be (at least one) winning candidate
+            //   2. [optimization] There should be (at least one) winning candidate
             if (self.get_status() == Status::Ended) && (self.winning.is_some()) {
                 // if winner already defined => just return her
                 if let Some(winner) = self.winner {
@@ -453,6 +466,13 @@ mod candle_auction {
                 // Determine winner by random candle blowing
                 // additional random source = caller address used as seed
                 self.winner = self.blow_candle(Self::env().caller().as_ref());
+                if let Some((w,b)) = self.winner {
+                    // emit Winner event 
+                    self.env().emit_event(Winner {
+                        account: w,
+                        bid: b,
+                    });
+                }
                 return self.winner;
             }
             None
