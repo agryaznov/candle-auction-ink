@@ -389,13 +389,15 @@ mod candle_auction {
         }
 
 
-        /// Retrospectively RANDOM `candle blowing`:
-        ///  `seed` buffer is used for 
-        ///  additional hash randomization
+        /// Retrospective RANDOM `candle blowing`:  
+        ///  `seed` buffer is used for
+        ///  additional hash randomization.  
+        /// Returns a record from `winning_data` determined randomly by `candle blow`
         fn blow_candle(&self, seed: &[u8]) -> Option<(AccountId, Balance)> {
             let opening_period_last_block = self.start_block + self.opening_period - 1;
             let ending_period_last_block = opening_period_last_block + self.ending_period;
 
+            // Here is where we use Random func
             let (raw_offset, known_since): (Hash, BlockNumber) =
                 ink_env::random::<Environment>(seed)
                     .expect("cannot get randomness!");
@@ -415,7 +417,7 @@ mod candle_auction {
                 // });
 
                 // Detect winning slot.
-                // Starting from `candle-detected` block,
+                // Starting from the `candle-determined` block,
                 // iterate backwards until a block with some bids found
                 let mut win_data: Option<(AccountId, Balance)> = None;
                 for i in (1..offset + 1).rev() {
@@ -442,13 +444,14 @@ mod candle_auction {
 
             // TODO: if there is no `basic` winner => there couldn't be a candle winner
             if self.get_status() == Status::Ended {
-                // if winner already defined => just return
+                // if winner already defined => just return her
                 if let Some(winner) = self.winner {
                     return Some(winner)
                 }
                 
                 // detect winner by random candle blowing
-                self.winner = self.blow_candle(&b"blabla"[..]);
+                // additional random source = caller address used as seed  
+                self.winner = self.blow_candle(Self::env().caller().as_ref());
                 return self.winner;
             }
             None
