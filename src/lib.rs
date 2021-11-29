@@ -368,10 +368,23 @@ mod candle_auction {
             self.status(now)
         }
 
+        /// Message to get final auction winner
         #[ink(message)]
         pub fn get_winner(&self) -> Option<AccountId> {
             // temporary same as noncandle
             self.get_noncandle_winner()
+        }
+
+        /// Message to get current `winning` account along with her bid  
+        /// Not to be confused with `winner`, which is final auction winner
+        #[ink(message)]
+        pub fn get_winning(&self) -> Option<(AccountId,Balance)> {
+            if let Some(winning) = self.winning {
+                let bid = self.balances.get(&winning).unwrap();
+                Some((winning, *bid))
+            } else {
+                None
+            }
         }
 
         /// Message to get auction winner in noncandle fashion.  
