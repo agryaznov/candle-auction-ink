@@ -457,7 +457,7 @@ mod candle_auction {
         }
 
         #[ink::test]
-        #[should_panic]
+        #[should_panic(expected = "Ended")]
         fn not_ended_no_payout() {
             // given
             // Alice and Bob
@@ -524,7 +524,7 @@ mod candle_auction {
         }
 
         #[ink::test]
-        #[should_panic]
+        #[should_panic(expected = "Auction is allowed to be scheduled to future blocks only!")]
         fn cannot_init_backdated_auction() {
             run_to_block::<Environment>(27);
             CandleAuction::new(
@@ -567,7 +567,7 @@ mod candle_auction {
         }
 
         #[ink::test]
-        #[should_panic]
+        #[should_panic(expected = "Auction isn't active!")]
         fn cannot_bid_until_started() {
             // given
             // default account (Alice)
@@ -591,7 +591,7 @@ mod candle_auction {
         }
 
         #[ink::test]
-        #[should_panic]
+        #[should_panic(expected = "Auction isn't active!")]
         fn cannot_bid_when_ended() {
             // given
             // default account (Alice)
