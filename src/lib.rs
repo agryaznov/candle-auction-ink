@@ -477,7 +477,18 @@ mod candle_auction {
             } else {
                 self.winner 
             }
-
+        }
+        
+        /// Message to get current `winning` account along with her bid  
+        /// Not to be confused with `winner`, which is final auction winner
+        #[ink(message)]
+        pub fn get_winning(&self) -> Option<(AccountId,Balance)> {
+            if let Some(winning) = self.winning {
+                let bid = self.balances.get(&winning).unwrap();
+                Some((winning, *bid))
+            } else {
+                None
+            }
         }
 
         /// Message to return winner.
@@ -561,7 +572,7 @@ mod candle_auction {
         }
 
         #[ink::test]
-        #[should_panic]
+        #[should_panic(expected = "Ended")]
         fn not_ended_no_payout() {
             // given
             // Alice and Bob
@@ -628,7 +639,7 @@ mod candle_auction {
         }
 
         #[ink::test]
-        #[should_panic]
+        #[should_panic(expected = "Auction is allowed to be scheduled to future blocks only!")]
         fn cannot_init_backdated_auction() {
             run_to_block::<Environment>(27);
             CandleAuction::new(
@@ -671,7 +682,7 @@ mod candle_auction {
         }
 
         #[ink::test]
-        #[should_panic]
+        #[should_panic(expected = "Auction isn't active!")]
         fn cannot_bid_until_started() {
             // given
             // default account (Alice)
@@ -695,7 +706,7 @@ mod candle_auction {
         }
 
         #[ink::test]
-        #[should_panic]
+        #[should_panic(expected = "Auction isn't active!")]
         fn cannot_bid_when_ended() {
             // given
             // default account (Alice)
