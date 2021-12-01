@@ -470,7 +470,14 @@ mod candle_auction {
         /// then gets the highest bidder in that block
         #[ink(message)]
         pub fn find_winner(&mut self) -> Option<(AccountId, Balance)> {
-            self.detect_winner()
+            // TODO: current implementation allows retry (re-blow candle) in case when no winner has been detected yet
+            // but, maybe, this shold be changed?
+            if self.winner.is_none()  { 
+                self.detect_winner() 
+            } else {
+                self.winner 
+            }
+
         }
 
         /// Message to return winner.
