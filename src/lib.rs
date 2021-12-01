@@ -390,8 +390,12 @@ mod candle_auction {
             let ending_period_last_block = opening_period_last_block + self.ending_period;
 
             // Here is where we use Random func
+            // TODO: current problem is that ink_env::random()
+            // ALWAYS returns BlockNumber=0
             let (raw_offset, known_since): (Hash, BlockNumber) =
                 crate::entropy::random::<Environment>(seed);
+            ink_env::debug_println!("RANDOM: ({:?},{:?})",raw_offset, known_since);
+            let mut win_data: Option<(AccountId, Balance)> = None;
             if ending_period_last_block <= known_since {
                 // (Inspired by:
                 //   https://github.com/paritytech/polkadot/blob/v0.9.13-rc1/runtime/common/src/auctions.rs#L526)
@@ -401,7 +405,7 @@ mod candle_auction {
 
                 // detect the block when 'the candle went out' in Ending Period
                 let offset = raw_offset_block_number % self.ending_period + 1;
-                
+                ink_env::debug_println!("offset is: {:?}", offset);
                 // emit Winning Offset event 
                 self.env().emit_event(WinningOffset {
                     offset: offset
@@ -409,7 +413,6 @@ mod candle_auction {
                 // Detect winning slot.
                 // Starting from the `candle-determined` block,
                 // iterate backwards until a block with some bids found
-                let mut win_data: Option<(AccountId, Balance)> = None;
                 for i in (1..offset + 1).rev() {
                     if let Some((w, b)) = self.winning_data.get(i).unwrap() {
                         win_data = Some((*w, *b));
@@ -419,11 +422,13 @@ mod candle_auction {
                 
                 return win_data;
             }
-            None
+            let msg = ink_prelude::format!("known_since is to early! {:?}",known_since);
+            win_data.expect(&msg);
+            win_data
         }
 
         /// Helper to determine the Candle auction winner:
-        fn detect_winner(&mut self) -> Option<(AccountId, Balance)> {
+        fn detect_winner(&mut self, seed: &[u8]) -> Option<(AccountId, Balance)> {
             // To get winner by candle:
             //   1. Auction should be Ended;
             //   2. [optimization] There should be (at least one) winning candidate
@@ -434,8 +439,7 @@ mod candle_auction {
                 }
 
                 // Determine winner by random candle blowing
-                // additional random source = caller address used as seed
-                self.winner = self.blow_candle(Self::env().caller().as_ref());
+                self.winner = self.blow_candle(seed);
                 if let Some((w,b)) = self.winner {
                     // emit Winner event 
                     self.env().emit_event(Winner {
@@ -473,10 +477,14 @@ mod candle_auction {
             // TODO: current implementation allows retry (re-blow candle) in case when no winner has been detected yet
             // but, maybe, this shold be changed?
             if self.winner.is_none()  { 
-                self.detect_winner() 
-            } else {
-                self.winner 
-            }
+                // additional random source (seed) = caller address used as seed
+                ink_env::debug_println!("detecting winner...");
+                self.detect_winner(self.env().caller().as_ref());
+                ink_env::debug_println!("detected");
+            } 
+            
+            ink_env::debug_println!("winner is: {:?}", self.winner.unwrap());
+            self.winner 
         }
         
         /// Message to get current `winning` account along with her bid  
@@ -890,7 +898,7 @@ mod candle_auction {
 
             // then
             // no winner yet determined
-            assert_eq!(auction.detect_winner(), None);
+            assert_eq!(auction.detect_winner(&b"blablabla"[..]), None);
         }
 
         #[ink::test]
@@ -962,7 +970,7 @@ mod candle_auction {
 
             // then
             // candle winner is detected
-            let w1 = auction.detect_winner().unwrap();
+            let w1 = auction.detect_winner(&b"blablabla"[..]).unwrap();
             auction.winner.expect("Candle winner SHOULD be detected!");
 
             // and
@@ -980,7 +988,7 @@ mod candle_auction {
                 // winner cannot be overriden
                 assert_eq!(
                     auction.winner.unwrap(),
-                    auction.detect_winner().unwrap()
+                    auction.detect_winner(&b"blablabla"[..]).unwrap()
                 );
             }
             // this one can fail once in 1048576 times:
