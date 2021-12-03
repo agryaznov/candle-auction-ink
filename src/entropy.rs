@@ -3,8 +3,6 @@
 //! Entropy module for
 //! Candle Auction implemented with Ink! smartcontract
 
-#![cfg_attr(not(feature = "std"), no_std)]
-
 use ink_env::Environment;
 
 /// Function to provide randomness to Candle Auction.  

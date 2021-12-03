@@ -389,17 +389,22 @@ mod candle_auction {
             let opening_period_last_block = self.start_block + self.opening_period - 1;
             let ending_period_last_block = opening_period_last_block + self.ending_period;
 
-            // Here is where we use Random func
-            // TODO: current problem is that ink_env::random()
-            // ALWAYS returns BlockNumber=0
+            // Here is where we use Random func.
+            // ink_env::random() uses `T::Randomness::random()` 
+            // which in `substrate-contracts-node` is implemented for `pallet_collective_flip`
+            // so that 81 blocks needed back in history to securely calcutate the seed
+            // see also https://github.com/paritytech/ink/issues/868
+
             let (raw_offset, known_since): (Hash, BlockNumber) =
                 crate::entropy::random::<Environment>(seed);
             ink_env::debug_println!("RANDOM: ({:?},{:?})",raw_offset, known_since);
             let mut win_data: Option<(AccountId, Balance)> = None;
+            // The returned seed should only be used to distinguish commitments made before the returned block number
+            // https://docs.substrate.io/rustdocs/latest/frame_support/traits/trait.Randomness.html#tymethod.random
             if ending_period_last_block <= known_since {
+                // Our random seed was known only after the auction ended. Good to use.
                 // (Inspired by:
                 //   https://github.com/paritytech/polkadot/blob/v0.9.13-rc1/runtime/common/src/auctions.rs#L526)
-                // Our random seed was known only after the auction ended. Good to use.
                 let raw_offset_block_number = <BlockNumber>::decode(&mut raw_offset.as_ref())
                     .expect("secure hashes should always be bigger than the block number; qed");
 
@@ -414,7 +419,7 @@ mod candle_auction {
                 // Starting from the `candle-determined` block,
                 // iterate backwards until a block with some bids found
                 for i in (1..offset + 1).rev() {
-                    if let Some((w, b)) = self.winning_data.get(i).unwrap() {
+                    if let Some(Some((w, b))) = self.winning_data.get(i) {
                         win_data = Some((*w, *b));
                         break;
                     }
@@ -422,7 +427,7 @@ mod candle_auction {
                 
                 return win_data;
             }
-            let msg = ink_prelude::format!("known_since is to early! {:?}",known_since);
+            let msg = ink_prelude::format!("known_since is to early: block#{:?}!",known_since);
             win_data.expect(&msg);
             win_data
         }
@@ -513,7 +518,7 @@ mod candle_auction {
         pub fn bid(&mut self) {
             let now = self.env().block_number();
             let bidder = Self::env().caller();
-            let bid_increment = self.env().transferred_balance();
+            let bid_increment = self.env().transferred_value();
             match self.handle_bid(bidder, bid_increment, now) {
                 Err(Error::AuctionNotActive) => {
                     panic!("Auction isn't active!")
