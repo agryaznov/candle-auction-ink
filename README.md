@@ -131,13 +131,20 @@ and deploy it through the [Canvas UI](https://paritytech.github.io/canvas-ui/#/)
    > some time later, she calls 
    > 2. `bid()` again, with `1000` `<Balance>` <- Alice' top bid now is 1101 (*not 1000*)
 
-4. Get current auction status by `get_status()` and winner `get_winner()` methods invocation.  
+4. Get current auction status by `get_status()` and winner by `get_winner()` methods invocation.  
 
-(4a. `[TDB]` Retroactive `candle` winner determination.)
+5. Once auction is ended, anyone can invoke `find_winner()` method to randomly detect a block during Ending period and set the auction winner to be the top bidder of that block. This effectively emulates candle blow for the auction.  
+   > _**:exclamation:NOTE**_ that `random()` function [implementation](https://github.com/paritytech/substrate/blob/v3.0.0/frame/randomness-collective-flip/src/lib.rs#L113) used in *substrate-contract-node*
+   > takes 81 block back in time to produce seed secure enough to use.
+   > As follows from [the function docs](https://docs.substrate.io/rustdocs/latest/frame_support/traits/trait.Randomness.html#tymethod.random),
+   > the returned seed should be used only to distinguish commitments made _after_ the first block of that 81 blocks sequence.  
+   > In other words, **`find_winner()` should be called not earlier than 81 block after the auction ended**.
+
+   
 
 **Settlement**:
 
-5. Once auction is done, participants (and contract owner) can claim their payouts/rewards with `payout()`.  
+1. Once auction is done, participants (and contract owner) can claim their payouts/rewards with `payout()`.  
    > **_:exclamation:NOTE_** that in NFT auction winner gets approval to transer all contract's ERC721 tokens with this. 
    She should then *transer* these tokens by herself by manually calling `transfer_from()` on that ERC721 contract.
 
