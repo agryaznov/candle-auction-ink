@@ -1234,42 +1234,5 @@ mod candle_auction {
             // Contract ledger cleared
             assert_eq!(auction.balances.len(), 0);
         }
-
-        #[ink::test]
-        #[ignore = "obsolete non-candle test"]
-        fn no_noncandle_winner_until_ended() {
-            // given
-            // Alice and Bob
-            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .alice;
-            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .bob;
-            // and an auction
-            let mut auction = CandleAuction::new(
-                None,
-                5,
-                10,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-            // when
-            // auction starts
-            run_to_block::<Environment>(1);
-            // Alice bids 100
-            set_sender::<Environment>(alice, 100);
-            auction.bid();
-
-            run_to_block::<Environment>(15);
-            // Bob bids 101
-            set_sender::<Environment>(bob, 101);
-            auction.bid();
-
-            // then
-            // no winner yet determined
-            assert_eq!(auction.get_noncandle_winner(), None);
-        }
     }
 }
