@@ -46,6 +46,7 @@ mod candle_auction {
         /// bids. Snapshots are taken currently on per-block basis, but this logic could be later evolve
         /// to take snapshots of on arbitrary length (in blocks)
         EndingPeriod(BlockNumber),
+        /// Candle was blown
         Ended,
         /// We have completed the bidding process and are waiting for the Random Function to return some acceptable
         /// randomness to select the winner. The number represents how many blocks we have been waiting.
@@ -112,8 +113,11 @@ mod candle_auction {
         /// *winning* <bidder> = current top bidder.  
         /// Not to be confused with *winner* = bidder who finally won.   
         winning: Option<AccountId>,
-        // winner (with bid) who finally won Candle auction
+        // Winner (with bid) who finally won Candle auction
         winner: Option<(AccountId, Balance)>,
+        /// Finalization flag (needed because winner detected by candle could be None)  
+        /// Once auction is finalized, that means candle went out and the winner has been detected
+        finalized: bool,
         /// WinningData = storage of winners per sample (block)
         /// it's a vector of optional (AccountId, Balance) tuples representing winner in block (sample) along with her bid
         /// 0-indexed value is winner for OpeningPeriod
@@ -167,6 +171,7 @@ mod candle_auction {
                 balances: StorageHashMap::new(),
                 winning: None,
                 winner: None,
+                finalized: false,
                 winning_data,
                 reward_contract_address,
                 subject,
@@ -182,7 +187,7 @@ mod candle_auction {
             if block >= self.start_block {
                 if block > opening_period_last_block {
                     if block > ending_period_last_block {
-                        if block <= (ending_period_last_block + crate::entropy::RF_DELAY) {
+                        if !self.finalized {
                             Status::RfDelay(block - ending_period_last_block - 1)
                         } else {
                             Status::Ended
@@ -272,8 +277,6 @@ mod candle_auction {
                 .expect("Winner is not detected, no payback is possible!");
             // winner gets her reward
             if to == winner {
-                // TODO: reward should payback _difference_ between won bid and balance, to winner
-                // TODO: check how it's implemented in parachain slot auction
                 // reward winner with specified reward method call
                 reward(&self, to);
             }
@@ -375,16 +378,6 @@ mod candle_auction {
             });
         }
 
-        /// Helper to get the auction winner in noncandle fashion.  
-        /// To avoid ambiguity, winner is determined once the auction ended.  
-        fn get_noncandle_winner(&self) -> Option<AccountId> {
-            if self.get_status() == Status::Ended {
-                self.winning
-            } else {
-                None
-            }
-        }
-
         /// Retrospective RANDOM `candle blowing`:  
         ///  `seed` buffer is used for additional hash randomization.  
         /// Returns a record from `winning_data` determined randomly by imitated `candle blow`
@@ -429,44 +422,53 @@ mod candle_auction {
 
                 return win_data;
             }
-            let msg = ink_prelude::format!("known_since is to early: block#{:?}!", known_since);
+            let msg = ink_prelude::format!("Random seed known_since is to early: block#{:?}!", known_since);
             win_data.expect(&msg);
             win_data
         }
 
         /// Helper to determine the Candle auction winner:
         fn detect_winner(&mut self, seed: &[u8]) -> Option<(AccountId, Balance)> {
-            // To get winner by candle:
-            //   1. Auction should be Ended;
-            //   2. [optimization] There should be (at least one) winning candidate
-            if (self.get_status() == Status::Ended) && (self.winning.is_some()) {
-                // if winner already defined => just return her
-                if let Some(winner) = self.winner {
-                    return Some(winner);
+             if let Some(winner) = self.winner {
+                 return Some(winner);
+             }
+            match self.get_status() {
+                Status::RfDelay(blocks) => {
+                    // RfDelay status means candle hasn't go out yet, we haven't decide winner.
+                    //
+                    // no sense to try to `blow_candle` before RF_DELAY blocks passed (as Randomness is not mature yet)
+                    // also, no sense to detect winner if there is no winning candidate
+                    if (blocks >= crate::entropy::RF_DELAY) && (self.winning.is_some()) {
+                        // Determine winner by random "candle blowing"
+                        self.winner = self.blow_candle(seed);
+                        if let Some((winner, bid)) = self.winner {
+                            // we have a winner!
+                            // decrement winner`s balance to won bid amount
+                            self.balances.entry(winner).and_modify(|b| *b -= bid);
+
+                            // increment auction owner's balance to won bid
+                            self.balances
+                                .entry(self.owner)
+                                .and_modify(|b| *b += bid)
+                                .or_insert(bid);
+
+                            // emit Winner event
+                            self.env().emit_event(Winner {
+                                account: winner,
+                                bid: bid,
+                            });
+                        }
+                        // finalize auction
+                        // this is needed for the case when
+                        // candle-detected winner is None, which is fair enough to be a result
+                        self.finalized = true;
+                        self.winner
+                    } else {
+                        None
+                    }
                 }
-
-                // Determine winner by random candle blowing
-                self.winner = self.blow_candle(seed);
-                if let Some((winner, bid)) = self.winner {
-                    // we have a winner!
-                    // decrement winner`s balance to won bid amount
-                    self.balances.entry(winner).and_modify(|b| *b -= bid);
-
-                    // increment auction owner's balance to won bid
-                    self.balances
-                        .entry(self.owner)
-                        .and_modify(|b| *b += bid)
-                        .or_insert(bid);
-
-                    // emit Winner event
-                    self.env().emit_event(Winner {
-                        account: winner,
-                        bid: bid,
-                    });
-                }
-                return self.winner;
+                _ => self.winner, // is None at this point 
             }
-            None
         }
 
         /// Message to get the auction subject.
@@ -491,11 +493,6 @@ mod candle_auction {
         /// then gets the highest bidder in that block
         #[ink(message)]
         pub fn find_winner(&mut self) -> Option<(AccountId, Balance)> {
-            // TODO: allow None winner to be expected _final_ result
-            // imagine situation when first bid is in last block of Ending period
-            // and it turns out that the candle went out beforehand
-            // this should result in non-winner as final result
-            // not allowing to re-blow the candle!
             if self.winner.is_none() {
                 // additional random source (seed) = caller address used as seed
                 self.detect_winner(self.env().caller().as_ref());
@@ -702,9 +699,11 @@ mod candle_auction {
 
             // then
             // as auction is still not ended
-            // there is no winner
+            // there is no winner yet
+            // candle is still burning
             // and hence payout is not possible
             // Bob calls for payout
+            run_to_block::<Environment>(33);
             set_sender::<Environment>(bob, 100);
             auction.payout();
 
@@ -715,14 +714,10 @@ mod candle_auction {
         #[should_panic(expected = "Winner is not detected, no payback is possible!")]
         fn no_winner_no_payout() {
             // given
-            // Alice and Bob
+            // Alice
             let alice = ink_env::test::default_accounts::<Environment>()
                 .unwrap()
                 .alice;
-            let bob = ink_env::test::default_accounts::<Environment>()
-                .unwrap()
-                .bob;
-
             // and an auction
             let mut auction = CandleAuction::new(
                 Some(1),
@@ -732,23 +727,30 @@ mod candle_auction {
                 Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
-            run_to_block::<Environment>(27);
-
-            // Alice bids
+            
+            // Alice bids at last block of the Ending period
+            run_to_block::<Environment>(30);
             set_sender::<Environment>(alice, 100);
             auction.bid();
 
             // auction is Ended
-            run_to_block::<Environment>(112);
+            run_to_block::<Environment>(31 + crate::entropy::RF_DELAY);
+            auction.find_winner();
 
             // then
-            // as winner is not detected
-            // hence the payout is not possible
-            // Bob calls for payout
-            set_sender::<Environment>(bob, 100);
-            auction.payout();
+            // if candle "went out" before that bid
+            if auction.winner.is_none() {
+                // as winner is not detected
+                // hence the payout is not possible
+                // Alice calls for payout
+                auction.payout();
+                // contract panics here
+            } else {
+                // this one is to make the test pass 
+                // even if candle went out at last block
+                panic!("Winner is not detected, no payback is possible!")
+            }
 
-            // contract panics here
         }
 
         #[ink::test]
@@ -799,7 +801,7 @@ mod candle_auction {
             // an auction with the following picture:
             //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
             //     | opening  |             ending    |
-            let candle_auction = CandleAuction::new(
+            let mut candle_auction = CandleAuction::new(
                 Some(2),
                 4,
                 7,
@@ -807,6 +809,10 @@ mod candle_auction {
                 Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
+
+            let alice = ink_env::test::default_accounts::<Environment>()
+                .unwrap()
+                .alice;
 
             assert_eq!(candle_auction.get_status(), Status::NotStarted);
             run_to_block::<Environment>(1);
@@ -817,6 +823,8 @@ mod candle_auction {
             assert_eq!(candle_auction.get_status(), Status::OpeningPeriod);
             run_to_block::<Environment>(6);
             assert_eq!(candle_auction.get_status(), Status::EndingPeriod(1));
+            set_sender::<Environment>(alice, 100);
+            candle_auction.bid();
             run_to_block::<Environment>(12);
             assert_eq!(candle_auction.get_status(), Status::EndingPeriod(7));
             run_to_block::<Environment>(13);
@@ -824,6 +832,8 @@ mod candle_auction {
             run_to_block::<Environment>(57);
             assert_eq!(candle_auction.get_status(), Status::RfDelay(57 - 13));
             run_to_block::<Environment>(94);
+            assert_eq!(candle_auction.get_status(), Status::RfDelay(81));
+            candle_auction.find_winner();
             assert_eq!(candle_auction.get_status(), Status::Ended);
         }
 
