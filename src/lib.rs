@@ -270,7 +270,6 @@ mod candle_auction {
             let (winner, _) = self
                 .get_winner()
                 .expect("Winner is not detected, no payback is possible!");
-            // TODO: refactor with match
             // winner gets her reward
             if to == winner {
                 // TODO: reward should payback _difference_ between won bid and balance, to winner
@@ -495,7 +494,7 @@ mod candle_auction {
             // imagine situation when first bid is in last block of Ending period
             // and it turns out that the candle went out beforehand
             // this should result in non-winner as final result
-            // not allowing to re-blow the candle! 
+            // not allowing to re-blow the candle!
             if self.winner.is_none() {
                 // additional random source (seed) = caller address used as seed
                 ink_env::debug_println!("detecting winner...");
@@ -597,6 +596,40 @@ mod candle_auction {
                 amount,
                 ink_env::test::CallData::new(ink_env::call::Selector::new([0x00; 4])), /* dummy */
             );
+        }
+
+        #[ink::test]
+        fn winner_get_change() {
+            // given
+            // an auction with the following structure:
+            //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
+            //     | opening  |        ending         |
+            let mut auction = CandleAuction::new(
+                Some(2),
+                4,
+                7,
+                0,
+                Hash::clear(),
+                AccountId::from(DEFAULT_CALLEE_HASH),
+            );
+
+            // and Alice
+            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                .unwrap()
+                .alice;
+
+            // when
+            // she bids in opening period
+            run_to_block::<Environment>(3);
+            // Alice bids 100
+            set_sender::<Environment>(alice, 100);
+            auction.bid();
+
+            // and then  overbids herself
+            run_to_block::<Environment>(12);
+            // Alice bids 200
+            set_sender::<Environment>(alice, 200);
+            auction.bid();
         }
 
         #[ink::test]
@@ -1063,18 +1096,6 @@ mod candle_auction {
                 "candle should be random!"
             );
         }
-        // Candle test cases:
-        // cannot:
-        //  1. get winner until ended (V)
-        //  2. override the winner (V)
-
-        // should:
-        //  3. if all but 1 None -> winner is 1
-        //  4. (very likely) (V)
-        // also:
-        //  5. TODO: reward should payback difference between won bid and balance, to winner
-        // #[ink::test]
-        // fn
 
         #[ink::test]
         fn dns_auction_new_works() {
@@ -1107,8 +1128,7 @@ mod candle_auction {
         // Hence we check here just that the winner is determined
         // and the looser can get his bidded amount back
         #[ink::test]
-        #[ignore = "obsolete non-candle test"]
-        fn noncandle_win_and_payout_work() {
+        fn win_and_payout_work() {
             // given
             // Charlie is auction owner
             let charlie = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
@@ -1135,23 +1155,28 @@ mod candle_auction {
 
             // when
             // auction starts
-            run_to_block::<Environment>(1);
+            run_to_block::<Environment>(3);
 
-            // Alice bids 100
+            // Alice bids 100 in Opening period
             set_sender::<Environment>(alice, 100);
             auction.bid();
 
-            run_to_block::<Environment>(15);
-            // Bob bids 101
+            run_to_block::<Environment>(4);
+            // Bob bids 101 in Opening period
             set_sender::<Environment>(bob, 101);
             auction.bid();
 
             // Auction ends
-            run_to_block::<Environment>(17);
+            // And RF_DELAY blocks passed so random function can be used
+            run_to_block::<Environment>(16 + crate::entropy::RF_DELAY);
+
+            // Charlie invokes winner determination
+            set_sender::<Environment>(charlie, 0);
+            auction.find_winner();
 
             // then
             // Bob wins (with bid 101)
-            assert_eq!(auction.get_noncandle_winner(), Some(bob));
+            assert_eq!(auction.get_winner(), Some((bob, 101)));
 
             // dirty hack
             // TODO: report problem: contract balance isn't changed with called payables
@@ -1165,43 +1190,49 @@ mod candle_auction {
             let balances_before = [
                 user_balance::<Environment>(alice).unwrap(),
                 user_balance::<Environment>(bob).unwrap(),
+                user_balance::<Environment>(charlie).unwrap(),
                 contract_balance::<Environment>(),
             ];
-            ink_env::debug_println!("balances_before: {:?}", balances_before);
+            // ink_env::debug_println!("balances_before: {:?}", balances_before);
 
-            // we don't check payout claimed by winner Bob
-            // offchain env does not support cross-contract calling
+            // We can't check if reward (auction subj) claimed by winner Bob
+            // is provided here, as offchain env does not support cross-contract calling.
+            // Winner Bob claims payout
+            // set_sender::<Environment>(bob, 0);
             // auction.payout();
 
             // payout claimed by looser Alice
             set_sender::<Environment>(alice, 0);
             auction.payout();
 
+            // payout claimed by auction owner Charlie
+            set_sender::<Environment>(charlie, 0);
+            auction.payout();
+
             let balances_after = [
                 user_balance::<Environment>(alice).unwrap(),
                 user_balance::<Environment>(bob).unwrap(),
+                user_balance::<Environment>(charlie).unwrap(),
                 contract_balance::<Environment>(),
             ];
-            ink_env::debug_println!("balances_after: {:?}", balances_after);
+            // ink_env::debug_println!("balances_after: {:?}", balances_after);
 
-            let mut balances_diff = [0; 3];
-            for i in 0..3 {
+            let mut balances_diff = [0; 4];
+            for i in 0..4 {
                 balances_diff[i] = balances_after[i].wrapping_sub(balances_before[i]);
             }
 
             // then
             // Alice gets back her bidded amount => diff = +100
             // Bob as winner gets no money back => diff = 0
-            // Contract pays that amount to Alice => diff = -100
-            // balances_diff == [100,0,-100]
-            assert_eq!(balances_diff, [100, 0, 0u128.wrapping_sub(100)]);
+            // Charlie as owner gets Bobs bid  => diff = +101
+            // Contract pays bid amount to Alice and Bob's bid goes to Charlie => diff = -100 - 101 = -201
+            // balances_diff == [100,0,101,-201]
+            assert_eq!(balances_diff, [100, 0, 101, 0u128.wrapping_sub(201)]);
 
             // and
             // Contract ledger cleared
-            // Again, except winner's balance,
-            // which will be cleared once he claims the reward,
-            // which cannot be tested in offchain env
-            assert_eq!(auction.balances.len(), 1);
+            assert_eq!(auction.balances.len(), 0);
         }
 
         #[ink::test]
