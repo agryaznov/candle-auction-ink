@@ -267,7 +267,7 @@ mod candle_auction {
             // we cannot payback no one until the winner is detected
             // otherwise, the winner could take his money back
             // in advance and break the auction
-            let (winner, bid) = self
+            let (winner, _) = self
                 .get_winner()
                 .expect("Winner is not detected, no payback is possible!");
             // winner gets her reward
@@ -276,25 +276,10 @@ mod candle_auction {
                 // TODO: check how it's implemented in parachain slot auction
                 // reward winner with specified reward method call
                 reward(&self, to);
-
-                // then pay him out the `change`
-                
-            } else if to == self.owner {
-                // auction owner gets winner bid
-                // (which is not nessesary winner`s balance!)
-                // zero-bid check: bid 0 is possible, but nothing to pay back
-                if bid > 0 {
-                    // update winner`s balance:
-                    self.balances.entry(winner).and_modify(|b| { *b -= bid } );
-
-                    // and pay for sold lot
-                    // to auction owner
-                    transfer::<Environment>(to, bid).unwrap();
-                }
-            } else {
-                // loser gets his bid amount back
-                let bal = self.balances.take(&to).unwrap();
-                // zero-balance check: bid 0 is possible, but nothing to pay back
+            }
+            // whoever calls this should get his balance paid back
+            if let Some(bal) = self.balances.take(&to) {
+                // zero-balance check: bal 0 is possible, but nothing to pay back
                 if bal > 0 {
                     // and pay
                     transfer::<Environment>(to, bal).unwrap();
@@ -416,7 +401,7 @@ mod candle_auction {
             let (raw_offset, known_since): (Hash, BlockNumber) =
                 crate::entropy::random::<Environment>(seed);
 
-                let mut win_data: Option<(AccountId, Balance)> = None;
+            let mut win_data: Option<(AccountId, Balance)> = None;
             // The returned seed should only be used to distinguish commitments made before the returned block number
             // https://docs.substrate.io/rustdocs/latest/frame_support/traits/trait.Randomness.html#tymethod.random
             if ending_period_last_block <= known_since {
@@ -462,9 +447,22 @@ mod candle_auction {
 
                 // Determine winner by random candle blowing
                 self.winner = self.blow_candle(seed);
-                if let Some((w, b)) = self.winner {
+                if let Some((winner, bid)) = self.winner {
+                    // we have a winner!
+                    // decrement winner`s balance to won bid amount
+                    self.balances.entry(winner).and_modify(|b| *b -= bid);
+
+                    // increment auction owner's balance to won bid
+                    self.balances
+                        .entry(self.owner)
+                        .and_modify(|b| *b += bid)
+                        .or_insert(bid);
+
                     // emit Winner event
-                    self.env().emit_event(Winner { account: w, bid: b });
+                    self.env().emit_event(Winner {
+                        account: winner,
+                        bid: bid,
+                    });
                 }
                 return self.winner;
             }
@@ -600,15 +598,15 @@ mod candle_auction {
 
         #[ink::test]
         fn winner_gets_change_back() {
-            // given    
+            // given
             // Charlie
             let charlie = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-            .unwrap()
-            .charlie;
+                .unwrap()
+                .charlie;
 
             set_sender::<Environment>(charlie, 1000);
 
-            // He setups 
+            // He setups
             // an auction with the following structure:
             //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
             //     | opening  |        ending         |
@@ -646,11 +644,11 @@ mod candle_auction {
             auction.find_winner();
 
             // then
-            if Some((alice,100)) == auction.get_winner() {
+            if Some((alice, 100)) == auction.get_winner() {
                 // if Alice wins with bid 100 (not 201)
 
-                // (we can't check that Alice gets 100 chage back 
-                // on `payout()` invocation, because the whole `reward()` will fail 
+                // (we can't check that Alice gets 100 chage back
+                // on `payout()` invocation, because the whole `reward()` will fail
                 // as cross-contract calls are not available here in off-chain tests
                 // TODO: put this into integration test)
                 // auction.payout()
@@ -658,22 +656,21 @@ mod candle_auction {
                 // dirty hack
                 // TODO: report problem: contract balance isn't changed with called payables
                 ink_env::test::set_account_balance::<Environment>(
-                ink_env::account_id::<Environment>(),
-                100000000,
+                    ink_env::account_id::<Environment>(),
+                    100000000,
                 )
                 .unwrap();
 
-                // then 
+                // then
                 // Charlie as auction owner gets only 100 paid out to him
                 set_sender::<Environment>(charlie, 0);
                 auction.payout();
-    
-                // and `change` 101 is left to Alice balance 
+
+                // and `change` 101 is left to Alice balance
                 // (she will get it back along with her reward)
                 let change = auction.balances.take(&alice).unwrap();
-                assert_eq!(change,101);
-            } 
-            
+                assert_eq!(change, 101);
+            }
         }
 
         #[ink::test]
@@ -1170,7 +1167,7 @@ mod candle_auction {
         // We can't check that winner get rewarded in offchain tests,
         // as it requires cross-contract calling.
         // Hence we check here just that the winner is determined,
-        // owner gets winner's bid, 
+        // owner gets winner's bid,
         // and the looser can get his bidded amount back
         #[ink::test]
         fn win_and_payout_work() {
