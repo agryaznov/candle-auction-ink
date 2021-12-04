@@ -481,6 +481,12 @@ mod candle_auction {
             }
         }
 
+        /// Message to get the rewarding contract address.
+        #[ink(message)]
+        pub fn get_contract(&self) -> AccountId {
+            self.reward_contract_address
+        }
+        
         /// Message to get the status of the auction given the current block number.
         #[ink(message)]
         pub fn get_status(&self) -> Status {
@@ -488,7 +494,7 @@ mod candle_auction {
             self.status(now)
         }
 
-        /// Message to determinate winner by candle.  
+        /// Message to determine winner by candle.  
         /// Gets random block in Ending period,  
         /// then gets the highest bidder in that block
         #[ink(message)]

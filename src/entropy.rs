@@ -6,7 +6,7 @@
 use ink_env::Environment;
 
 /// Number of blocks to wait until acceptable randomness is available
-/// see RANDOM_MATERIAL_LEN
+/// see const RANDOM_MATERIAL_LEN
 /// in https://github.com/paritytech/substrate/blob/v3.0.0/frame/randomness-collective-flip/src/lib.rs
 pub const RF_DELAY: u32 = 81;
 
