@@ -422,16 +422,19 @@ mod candle_auction {
 
                 return win_data;
             }
-            let msg = ink_prelude::format!("Random seed known_since is to early: block#{:?}!", known_since);
+            let msg = ink_prelude::format!(
+                "Random seed known_since is to early: block#{:?}!",
+                known_since
+            );
             win_data.expect(&msg);
             win_data
         }
 
         /// Helper to determine the Candle auction winner:
         fn detect_winner(&mut self, seed: &[u8]) -> Option<(AccountId, Balance)> {
-             if let Some(winner) = self.winner {
-                 return Some(winner);
-             }
+            if let Some(winner) = self.winner {
+                return Some(winner);
+            }
             match self.get_status() {
                 Status::RfDelay(blocks) => {
                     // RfDelay status means candle hasn't go out yet, we haven't decide winner.
@@ -467,7 +470,7 @@ mod candle_auction {
                         None
                     }
                 }
-                _ => self.winner, // is None at this point 
+                _ => self.winner, // is None at this point
             }
         }
 
@@ -486,7 +489,7 @@ mod candle_auction {
         pub fn get_contract(&self) -> AccountId {
             self.reward_contract_address
         }
-        
+
         /// Message to get the status of the auction given the current block number.
         #[ink(message)]
         pub fn get_status(&self) -> Status {
@@ -570,25 +573,23 @@ mod candle_auction {
 
         const DEFAULT_CALLEE_HASH: [u8; 32] = [0x06; 32];
 
-        fn run_to_block<T>(n: T::BlockNumber)
-        where
-            T: ink_env::Environment,
-        {
-            let mut block = ink_env::block_number::<T>();
+        fn accounts() -> ink_env::test::DefaultAccounts<Environment> {
+            ink_env::test::default_accounts::<Environment>().unwrap()
+        }
+
+        fn run_to_block(n: BlockNumber) {
+            let mut block = ink_env::block_number::<Environment>();
             while block < n {
-                match ink_env::test::advance_block::<T>() {
+                match ink_env::test::advance_block::<Environment>() {
                     Err(_) => {
                         panic!("Cannot add blocks to test chain!")
                     }
-                    Ok(_) => block = ink_env::block_number::<T>(),
+                    Ok(_) => block = ink_env::block_number::<Environment>(),
                 }
             }
         }
 
-        fn set_sender<T>(sender: AccountId, amount: T::Balance)
-        where
-            T: ink_env::Environment<Balance = u128>,
-        {
+        fn set_sender(sender: AccountId, amount: Balance) {
             ink_env::test::push_execution_context::<Environment>(
                 sender,
                 ink_env::account_id::<Environment>(),
@@ -599,70 +600,158 @@ mod candle_auction {
         }
 
         fn set_balance(account_id: AccountId, balance: Balance) {
-            ink_env::test::set_account_balance::<ink_env::DefaultEnvironment>(
-                account_id, balance,
-            )
-            .expect("Cannot set account balance");
+            ink_env::test::set_account_balance::<ink_env::DefaultEnvironment>(account_id, balance)
+                .expect("Cannot set account balance");
         }
-        
+
         fn get_balance(account_id: AccountId) -> Balance {
             ink_env::test::get_account_balance::<ink_env::DefaultEnvironment>(account_id)
                 .expect("Cannot set account balance")
         }
 
         fn contract_id() -> AccountId {
-            ink_env::test::get_current_contract_account_id::<Environment>(
+            ink_env::test::get_current_contract_account_id::<Environment>()
+                .expect("Cannot get contract id")
+        }
+
+        fn create_auction(
+            start_at: Option<BlockNumber>,
+            opening_period: BlockNumber,
+            ending_period: BlockNumber,
+            subject: u8,
+        ) -> CandleAuction {
+            CandleAuction::new(
+                start_at,
+                opening_period,
+                ending_period,
+                subject,
+                Hash::clear(),
+                AccountId::from(DEFAULT_CALLEE_HASH),
             )
-            .expect("Cannot get contract id")
+        }
+
+        #[ink::test]
+        fn new_works() {
+            let auction = create_auction(Some(10), 5, 10, 0);
+            assert_eq!(auction.start_block, 10);
+            assert_eq!(auction.get_status(), Status::NotStarted);
+        }
+
+        #[ink::test]
+        fn new_default_start_block_works() {
+            run_to_block(12);
+
+            let auction = create_auction(None, 5, 10, 0);
+            assert_eq!(auction.start_block, 13);
+            assert_eq!(auction.get_status(), Status::NotStarted);
+        }
+
+        #[ink::test]
+        fn dns_auction_new_works() {
+            let auction_with_domain = CandleAuction::new(
+                Some(10),
+                5,
+                10,
+                1,
+                Hash::from([0x99; 32]),
+                AccountId::from(DEFAULT_CALLEE_HASH),
+            );
+            assert_eq!(auction_with_domain.start_block, 10);
+            assert_eq!(auction_with_domain.domain, Hash::from([0x99; 32]));
+            assert_eq!(auction_with_domain.get_status(), Status::NotStarted);
+
+            let auction_no_domain = create_auction(Some(10), 5, 10, 1);
+
+            assert_eq!(auction_no_domain.domain, Hash::clear());
+        }
+
+        #[ink::test]
+        #[should_panic(expected = "Auction is allowed to be scheduled to future blocks only!")]
+        fn cannot_init_backdated_auction() {
+            run_to_block(27);
+            create_auction(Some(1), 10, 20, 0);
+        }
+
+        #[ink::test]
+        #[should_panic(expected = "Auction isn't active!")]
+        fn cannot_bid_until_started() {
+            // given
+            // default account (Alice)
+            // when
+            // auction starts at block #5
+            let mut auction = create_auction(Some(5), 5, 10, 0);
+            // and Alice tries to make a bid before block #5
+            auction.bid();
+            // then
+            // contract should just panic after this line
+        }
+
+        #[ink::test]
+        fn auction_statuses_returned_correctly() {
+            // an auction with the following picture:
+            //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
+            //     | opening  |             ending    |
+            let mut auction = create_auction(Some(2), 4, 7, 0);
+
+            let alice = accounts().alice;
+
+            assert_eq!(auction.get_status(), Status::NotStarted);
+            run_to_block(1);
+            assert_eq!(auction.get_status(), Status::NotStarted);
+            run_to_block(2);
+            assert_eq!(auction.get_status(), Status::OpeningPeriod);
+            run_to_block(5);
+            assert_eq!(auction.get_status(), Status::OpeningPeriod);
+            run_to_block(6);
+            assert_eq!(auction.get_status(), Status::EndingPeriod(1));
+            set_sender(alice, 100);
+            auction.bid();
+            run_to_block(12);
+            assert_eq!(auction.get_status(), Status::EndingPeriod(7));
+            run_to_block(13);
+            assert_eq!(auction.get_status(), Status::RfDelay(0));
+            run_to_block(57);
+            assert_eq!(auction.get_status(), Status::RfDelay(57 - 13));
+            run_to_block(94);
+            assert_eq!(auction.get_status(), Status::RfDelay(81));
+            auction.find_winner();
+            assert_eq!(auction.get_status(), Status::Ended);
         }
 
         #[ink::test]
         fn winner_gets_change_back() {
             // given
             // Charlie
-            let charlie = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .charlie;
-
-            set_sender::<Environment>(charlie, 1000);
+            let charlie = accounts().charlie;
+            set_sender(charlie, 1000);
 
             // He setups
             // an auction with the following structure:
             //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
             //     | opening  |        ending         |
-            let mut auction = CandleAuction::new(
-                Some(2),
-                4,
-                7,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
+            let mut auction = create_auction(Some(2), 4, 7, 0);
 
             // this is needed becase for some reason in tests payables don't add up to contract balance
-            set_balance(contract_id(),1000);
+            set_balance(contract_id(), 1000);
 
             // and Alice
-            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .alice;
+            let alice = accounts().alice;
 
             // when
             // she bids in opening period
-            run_to_block::<Environment>(3);
+            run_to_block(3);
             // Alice bids 100
-            set_sender::<Environment>(alice, 100);
+            set_sender(alice, 100);
             auction.bid();
 
-            // and then  overbids herself
-
-            run_to_block::<Environment>(12);
+            // and then she overbids herself
+            run_to_block(12);
             // Alice bids 201 by adding 101 to her bid
-            set_sender::<Environment>(alice, 101);
+            set_sender(alice, 101);
             auction.bid();
 
             // and auction ends
-            run_to_block::<Environment>(13 + crate::entropy::RF_DELAY);
+            run_to_block(13 + crate::entropy::RF_DELAY);
 
             // and candle is blown
             auction.find_winner();
@@ -679,7 +768,7 @@ mod candle_auction {
 
                 // then
                 // Charlie as auction owner gets only 100 paid out to him
-                set_sender::<Environment>(charlie, 0);
+                set_sender(charlie, 0);
                 auction.payout();
 
                 // and `change` 1 is left to Alice balance
@@ -694,26 +783,16 @@ mod candle_auction {
         fn not_ended_no_payout() {
             // given
             // Alice and Bob
-            let alice = ink_env::test::default_accounts::<Environment>()
-                .unwrap()
-                .alice;
-            let bob = ink_env::test::default_accounts::<Environment>()
-                .unwrap()
-                .bob;
+            let alice = accounts().alice;
+            let bob = accounts().bob;
 
             // and an auction
-            let mut auction = CandleAuction::new(
-                Some(1),
-                10,
-                20,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-            run_to_block::<Environment>(27);
+            let mut auction = create_auction(Some(1), 10, 20, 0);
+
+            run_to_block(27);
 
             // Alice bids
-            set_sender::<Environment>(alice, 100);
+            set_sender(alice, 100);
             auction.bid();
 
             // then
@@ -722,8 +801,8 @@ mod candle_auction {
             // candle is still burning
             // and hence payout is not possible
             // Bob calls for payout
-            run_to_block::<Environment>(33);
-            set_sender::<Environment>(bob, 100);
+            run_to_block(33);
+            set_sender(bob, 100);
             auction.payout();
 
             // contract panics here
@@ -734,26 +813,17 @@ mod candle_auction {
         fn no_winner_no_payout() {
             // given
             // Alice
-            let alice = ink_env::test::default_accounts::<Environment>()
-                .unwrap()
-                .alice;
+            let alice = accounts().alice;
             // and an auction
-            let mut auction = CandleAuction::new(
-                Some(1),
-                10,
-                20,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-            
+            let mut auction = create_auction(Some(1), 10, 20, 0);
+
             // Alice bids at last block of the Ending period
-            run_to_block::<Environment>(30);
-            set_sender::<Environment>(alice, 100);
+            run_to_block(30);
+            set_sender(alice, 100);
             auction.bid();
 
             // auction is Ended
-            run_to_block::<Environment>(31 + crate::entropy::RF_DELAY);
+            run_to_block(31 + crate::entropy::RF_DELAY);
             auction.find_winner();
 
             // then
@@ -765,119 +835,10 @@ mod candle_auction {
                 auction.payout();
                 // contract panics here
             } else {
-                // this one is to make the test pass 
+                // this one is to make the test pass
                 // even if candle went out at last block
                 panic!("Winner is not detected, no payback is possible!")
             }
-
-        }
-
-        #[ink::test]
-        fn new_works() {
-            let candle_auction = CandleAuction::new(
-                Some(10),
-                5,
-                10,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-            assert_eq!(candle_auction.start_block, 10);
-            assert_eq!(candle_auction.get_status(), Status::NotStarted);
-        }
-
-        #[ink::test]
-        fn new_default_start_block_works() {
-            run_to_block::<Environment>(12);
-            let candle_auction = CandleAuction::new(
-                None,
-                5,
-                10,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-            assert_eq!(candle_auction.start_block, 13);
-            assert_eq!(candle_auction.get_status(), Status::NotStarted);
-        }
-
-        #[ink::test]
-        #[should_panic(expected = "Auction is allowed to be scheduled to future blocks only!")]
-        fn cannot_init_backdated_auction() {
-            run_to_block::<Environment>(27);
-            CandleAuction::new(
-                Some(1),
-                10,
-                20,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-        }
-
-        #[ink::test]
-        fn auction_statuses_returned_correctly() {
-            // an auction with the following picture:
-            //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
-            //     | opening  |             ending    |
-            let mut candle_auction = CandleAuction::new(
-                Some(2),
-                4,
-                7,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-
-            let alice = ink_env::test::default_accounts::<Environment>()
-                .unwrap()
-                .alice;
-
-            assert_eq!(candle_auction.get_status(), Status::NotStarted);
-            run_to_block::<Environment>(1);
-            assert_eq!(candle_auction.get_status(), Status::NotStarted);
-            run_to_block::<Environment>(2);
-            assert_eq!(candle_auction.get_status(), Status::OpeningPeriod);
-            run_to_block::<Environment>(5);
-            assert_eq!(candle_auction.get_status(), Status::OpeningPeriod);
-            run_to_block::<Environment>(6);
-            assert_eq!(candle_auction.get_status(), Status::EndingPeriod(1));
-            set_sender::<Environment>(alice, 100);
-            candle_auction.bid();
-            run_to_block::<Environment>(12);
-            assert_eq!(candle_auction.get_status(), Status::EndingPeriod(7));
-            run_to_block::<Environment>(13);
-            assert_eq!(candle_auction.get_status(), Status::RfDelay(0));
-            run_to_block::<Environment>(57);
-            assert_eq!(candle_auction.get_status(), Status::RfDelay(57 - 13));
-            run_to_block::<Environment>(94);
-            assert_eq!(candle_auction.get_status(), Status::RfDelay(81));
-            candle_auction.find_winner();
-            assert_eq!(candle_auction.get_status(), Status::Ended);
-        }
-
-        #[ink::test]
-        #[should_panic(expected = "Auction isn't active!")]
-        fn cannot_bid_until_started() {
-            // given
-            // default account (Alice)
-
-            // when
-            // auction starts at block #5
-            let mut auction = CandleAuction::new(
-                Some(5),
-                5,
-                10,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-
-            // and Alice tries to make a bid before block #5
-            auction.bid();
-
-            // then
-            // contract should just panic after this line
         }
 
         #[ink::test]
@@ -886,18 +847,11 @@ mod candle_auction {
             // given
             // default account (Alice)
             // and auction starts at block #1 and ended after block #15
-            let mut auction = CandleAuction::new(
-                None,
-                5,
-                10,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
+            let mut auction = create_auction(None, 5, 10, 0);
 
             // when
             // Auction is ended, RfDelay
-            run_to_block::<Environment>(16);
+            run_to_block(16);
 
             // and Alice tries to make a bid before block #5
             auction.bid();
@@ -910,30 +864,16 @@ mod candle_auction {
         fn bidding_works() {
             // given
             // Bob
-            let bob = ink_env::test::default_accounts::<Environment>()
-                .unwrap()
-                .bob;
-
+            let bob = accounts().bob;
             // and the auction
-            let mut auction = CandleAuction::new(
-                None,
-                5,
-                10,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-
+            let mut auction = create_auction(None, 5, 10, 0);
             // when
             // Push block to 1 to make auction started
-            run_to_block::<Environment>(1);
-
+            run_to_block(1);
             // Bob bids 100
-            set_sender::<Environment>(bob, 100);
+            set_sender(bob, 100);
             assert_eq!(auction.bid(), ());
-
-            run_to_block::<Environment>(2);
-
+            run_to_block(2);
             // then
             // bid is accepted
             assert_eq!(auction.balances.get(&bob), Some(&100));
@@ -942,22 +882,21 @@ mod candle_auction {
             // TODO: report problem: neither caller nor callee balances are changed with called payables
             // and his balance decreased by the bid amount
             // assert_eq!(get_balance(bob),25);
-            
+
             // then
             // Bob bids 125
-            set_sender::<Environment>(bob, 125);
+            set_sender(bob, 125);
             // TODO: report problem to ink_env::test: neither caller nor callee balances are changed with called payables
-            set_balance(contract_id(),101);
+            set_balance(contract_id(), 101);
             auction.bid();
 
-            run_to_block::<Environment>(5);
+            run_to_block(5);
             // new bid is accepted: balance is updated
             assert_eq!(auction.balances.get(&bob), Some(&125));
             // and Bob is still winning
             assert_eq!(auction.winning, Some(bob));
             // and contract paid back the first bid
-            assert_eq!(get_balance(contract_id()),1);
-
+            assert_eq!(get_balance(contract_id()), 1);
         }
 
         #[ink::test]
@@ -966,44 +905,31 @@ mod candle_auction {
             // an auction with the following structure:
             //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
             //     | opening  |        ending         |
-            let mut auction = CandleAuction::new(
-                Some(2),
-                4,
-                7,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
+            let mut auction = create_auction(Some(2), 4, 7, 0);
 
             // this is needed becase for some reason in tests payables don't add up to contract balance
-            set_balance(contract_id(),1000);
+            set_balance(contract_id(), 1000);
 
             // Alice and Bob
-            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .alice;
-            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .bob;
+            let alice = accounts().alice;
+            let bob = accounts().bob;
 
             // when
             // there is no bids
             // then
             // winning_data initialized with Nones
             assert_eq!(auction.winning_data, [None; 8].iter().map(|o| *o).collect());
-
             // when
             // there are bids in opening period
-            run_to_block::<Environment>(3);
+            run_to_block(3);
             // Alice bids 100
-            set_sender::<Environment>(alice, 100);
+            set_sender(alice, 100);
             auction.bid();
 
-            run_to_block::<Environment>(5);
+            run_to_block(5);
             // Bob bids 101
-            set_sender::<Environment>(bob, 101);
+            set_sender(bob, 101);
             auction.bid();
-
             // then
             // the top of these bids goes to index 0
             assert_eq!(
@@ -1013,22 +939,21 @@ mod candle_auction {
                     .map(|o| *o)
                     .collect()
             );
-
             // when
             // bids added in Ending Period
-            run_to_block::<Environment>(7);
+            run_to_block(7);
             // Alice bids 102
-            set_sender::<Environment>(alice, 102);
+            set_sender(alice, 102);
             auction.bid();
 
-            run_to_block::<Environment>(9);
+            run_to_block(9);
             // Bob bids 103
-            set_sender::<Environment>(bob, 103);
+            set_sender(bob, 103);
             auction.bid();
 
-            run_to_block::<Environment>(11);
+            run_to_block(11);
             // Alice bids 104
-            set_sender::<Environment>(alice, 104);
+            set_sender(alice, 104);
             auction.bid();
 
             // then
@@ -1055,31 +980,20 @@ mod candle_auction {
         fn no_winner_until_ended() {
             // given
             // Alice and Bob
-            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .alice;
-            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .bob;
+            let alice = accounts().alice;
+            let bob = accounts().bob;
             // and an auction
-            let mut auction = CandleAuction::new(
-                None,
-                5,
-                10,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
+            let mut auction = create_auction(None, 5, 10, 0);
             // when
             // auction starts
-            run_to_block::<Environment>(1);
+            run_to_block(1);
             // Alice bids 100
-            set_sender::<Environment>(alice, 100);
+            set_sender(alice, 100);
             auction.bid();
 
-            run_to_block::<Environment>(15);
+            run_to_block(15);
             // Bob bids 101
-            set_sender::<Environment>(bob, 101);
+            set_sender(bob, 101);
             auction.bid();
 
             // then
@@ -1093,58 +1007,45 @@ mod candle_auction {
             // an auction with the following structure:
             //  [1][2][3][4][5][6][7][8][9][10][11][12][13]
             //     | opening  |        ending         |
-            let mut auction = CandleAuction::new(
-                Some(2),
-                4,
-                7,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
+            let mut auction = create_auction(Some(2), 4, 7, 0);
 
             // this is needed becase for some reason in tests payables don't add up to contract balance
-            set_balance(contract_id(),1000);
+            set_balance(contract_id(), 1000);
 
             // Alice and Bob
-            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .alice;
-            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .bob;
+            let alice = accounts().alice;
+            let bob = accounts().bob;
 
             // when
             // there are bids in opening period
-            run_to_block::<Environment>(3);
+            run_to_block(3);
             // Alice bids 100
-            set_sender::<Environment>(alice, 100);
+            set_sender(alice, 100);
             auction.bid();
 
-            run_to_block::<Environment>(5);
+            run_to_block(5);
             // Bob bids 100
-            set_sender::<Environment>(bob, 101);
+            set_sender(bob, 101);
             auction.bid();
-
             // when
             // bids added in Ending Period
-            run_to_block::<Environment>(7);
+            run_to_block(7);
             // Alice bids 102
-            set_sender::<Environment>(alice, 102);
+            set_sender(alice, 102);
             auction.bid();
 
-            run_to_block::<Environment>(9);
+            run_to_block(9);
             // Bob bids 103
-            set_sender::<Environment>(bob, 103);
+            set_sender(bob, 103);
             auction.bid();
 
-            run_to_block::<Environment>(11);
+            run_to_block(11);
             // Alice bids 104
-            set_sender::<Environment>(alice, 104);
+            set_sender(alice, 104);
             auction.bid();
 
             // auction ends
-            run_to_block::<Environment>(13 + crate::entropy::RF_DELAY);
-
+            run_to_block(13 + crate::entropy::RF_DELAY);
             // auction.winning_data:
             //     [
             //         Some((bob, 101)),
@@ -1161,7 +1062,6 @@ mod candle_auction {
             // candle winner is detected
             let w1 = auction.detect_winner(&b"blablabla"[..]).unwrap();
             auction.winner.expect("Candle winner SHOULD be detected!");
-
             // and
             // winner detection is likely to be randomized:
             //   should be 4^-10 ~ less than _one in a million_ chance
@@ -1170,7 +1070,7 @@ mod candle_auction {
             let mut candles = Vec::<(AccountId, Balance)>::new();
             candles.push(w1);
             for i in 1..10 {
-                run_to_block::<Environment>(13 + crate::entropy::RF_DELAY + i);
+                run_to_block(13 + crate::entropy::RF_DELAY + i);
                 candles.push(auction.blow_candle(&b"blablabla"[..]).unwrap());
                 // winner cannot be overriden
                 assert_eq!(
@@ -1189,32 +1089,6 @@ mod candle_auction {
             );
         }
 
-        #[ink::test]
-        fn dns_auction_new_works() {
-            let auction_with_domain = CandleAuction::new(
-                Some(10),
-                5,
-                10,
-                1,
-                Hash::from([0x99; 32]),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-            assert_eq!(auction_with_domain.start_block, 10);
-            assert_eq!(auction_with_domain.domain, Hash::from([0x99; 32]));
-            assert_eq!(auction_with_domain.get_status(), Status::NotStarted);
-
-            let auction_no_domain = CandleAuction::new(
-                Some(10),
-                5,
-                10,
-                1,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
-
-            assert_eq!(auction_no_domain.domain, Hash::clear());
-        }
-
         // We can't check that winner get rewarded in offchain tests,
         // as it requires cross-contract calling.
         // Hence we check here just that the winner is determined,
@@ -1223,48 +1097,32 @@ mod candle_auction {
         #[ink::test]
         fn win_and_payout_work() {
             // given
-            // Charlie is auction owner
-            let charlie = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .charlie;
-            // Alice and Bob are bidders
-            let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .alice;
-            let bob = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-                .unwrap()
-                .bob;
+            // Charlie is auction owner, Alice and Bob are bidders
+            let (charlie, alice, bob) = (accounts().charlie, accounts().alice, accounts().bob);
 
             // Charlie sets up an auction
-            set_sender::<Environment>(charlie, 1000);
-            let mut auction = CandleAuction::new(
-                None,
-                5,
-                10,
-                0,
-                Hash::clear(),
-                AccountId::from(DEFAULT_CALLEE_HASH),
-            );
+            set_sender(charlie, 1000);
+            let mut auction = create_auction(None, 5, 10, 0);
 
             // when
             // auction starts
-            run_to_block::<Environment>(3);
+            run_to_block(3);
 
             // Alice bids 100 in Opening period
-            set_sender::<Environment>(alice, 100);
+            set_sender(alice, 100);
             auction.bid();
 
-            run_to_block::<Environment>(4);
+            run_to_block(4);
             // Bob bids 101 in Opening period
-            set_sender::<Environment>(bob, 101);
+            set_sender(bob, 101);
             auction.bid();
 
             // Auction ends
             // And RF_DELAY blocks passed so random function can be used
-            run_to_block::<Environment>(16 + crate::entropy::RF_DELAY);
+            run_to_block(16 + crate::entropy::RF_DELAY);
 
             // Charlie invokes winner determination
-            set_sender::<Environment>(charlie, 0);
+            set_sender(charlie, 0);
             auction.find_winner();
 
             // then
@@ -1273,11 +1131,7 @@ mod candle_auction {
 
             // dirty hack
             // TODO: report problem: contract balance isn't changed with called payables
-            ink_env::test::set_account_balance::<Environment>(
-                ink_env::account_id::<Environment>(),
-                100000000,
-            )
-            .unwrap();
+            set_balance(contract_id(), 1000);
 
             // balances: [alice's, bob's, contract's]
             let balances_before = [
@@ -1291,15 +1145,15 @@ mod candle_auction {
             // We can't check if reward (auction subj) claimed by winner Bob
             // is provided here, as offchain env does not support cross-contract calling.
             // Winner Bob claims payout
-            // set_sender::<Environment>(bob, 0);
+            // set_sender(bob, 0);
             // auction.payout();
 
             // payout claimed by looser Alice
-            set_sender::<Environment>(alice, 0);
+            set_sender(alice, 0);
             auction.payout();
 
             // payout claimed by auction owner Charlie
-            set_sender::<Environment>(charlie, 0);
+            set_sender(charlie, 0);
             auction.payout();
 
             let balances_after = [
