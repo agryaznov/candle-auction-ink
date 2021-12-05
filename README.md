@@ -1,13 +1,11 @@
 > :bangbang: This is a **Work in Progress**.  
-> Current status: [Milestone-1](https://github.com/w3f/Grants-Program/blob/master/applications/candle_auction_ink.md#milestone-1---basic-auction) :heavy_check_mark: completed.  
+> Current status: [Milestone-2](https://github.com/w3f/Grants-Program/blob/master/applications/candle_auction_ink.md#milestone-2---random-close) :heavy_check_mark: completed.  
 > **Use at your own risk**. 
 
 # 🕯️ Candle Auctions on Ink! 🎃
 This is an [Ink!](https://github.com/paritytech/ink) smartcontract implementing a [candle auction](https://github.com/paritytech/ink) logic.
 
-With this contract, one can set up an auction for a **NFT collection** or a **domain name**!  
-
-(Currently it's a basic auction. Candle one is WIP and will be delivered in [Milestone-2](https://github.com/w3f/Grants-Program/blob/master/rfps/candle-auction.md#milestone-2---random-close) shortly. Stay tuned!)
+With this contract, one can set up a candle auction for a **NFT collection** or a **domain name**!  
 
 ## Design Considerations
 **Basic features**   
@@ -19,26 +17,27 @@ With this contract, one can set up an auction for a **NFT collection** or a **do
   //     | opening  |        ending         |   
   ```
 - The contract accepts payments and records participants` balances.
-- Bidders balances as stored as a *HashMap* which effectively presents top bid per user.  
-- Bids are made by transferring an amount to increment current bidder's balance which effectively equals her top bid at any point of time.  
-  > E.g. Alice making calls:  
-  > 1. `bid()` with `101` `<Balance>` <- Alice' top bid is 101   
-  > some time later, she calls 
-  > 2. `bid()` again, with `1000` `<Balance>` <- Alice' top bid now is 1101 (*not 1000*)
+- Bidders balances are stored as a *HashMap* which effectively presents top bid per user.  
+- Bids are made by transferring a bid amount to contract with invoking `bid()` payable method. 
 - *Pluggable reward logic*: auction reward method can be one of provided options and should be specified on contract initiation.
-- Reward logic is executed by cross contract method invocation    
-  low-level *ink_env::call::CallBuilder* is preferred over *ink-as-dependency* way, for the sake of *loosely coupling* 
-- Payouts can be claimed once auction ended, on per user basic by `payout()` method invocation:  
-  - winner is paid by specified reward logic  
-    (e.g. a domain name transferral or an approval to became some NFT tokens operator);
+- Reward logic is executed by cross-contract method invocation: this very contract communicates with specified `ERC721` or `DNS` contract instance, depending on which auction subject has been set up.      
+  Low-level *ink_env::call::CallBuilder* is preferred over *ink-as-dependency* way, for the sake of *loosely coupling*.  
+- Auction finalization, i.e. winner determination, is invoked by calling `find_winner()` method.  
+  This can be done by anyone generous enough to pay for gas. However, due to specifics of secure random number generation on-chain, this is allowed to be done not earlier than `RF_DELAY` blocks after the last block of the *Ending period* has beem sealed to chain.  
+- Payouts can be claimed once auction is finalized, on per user basic by `payout()` method invocation:  
+  - winner is paid by the specified reward logic  
+    (e.g. a domain name transferral or an approval to became some NFT tokens operator);  
+    in case not the highest of her bids wins, the winner also gets the *change* paid back;
   - other bidders are paid by recieving their bidded amounts back;  
-  - auction owner is paid by recieving winning bid amount (winner's balance).
+  - auction owner is paid by recieving the winning bid amount.
 
 **Candle-fashioned**   
+- Major feature what makes this auction _candle-fashioned_ is the randomness of winning sample selection.  
+  The contract allows you to configure the source of this randomness (see [entropy module](src/entropy.rs)). By default, it uses `ink_env::random()` function which in turn utilizes [randomness-collective-flip](https://github.com/paritytech/substrate/blob/v3.0.0/frame/randomness-collective-flip/src/lib.rs#L113).  
 - In order to make *candle* logic possible, we also store `winning_data` in featured *StorageVec* which holds bids for every *sample*.
-- *Sample* is a number of consequent blocks identifying a time interval inside Ending Period.  
-  In *PoC* version, sample equals to a single block. This will be enhanced later to be a configurable parameter.  
-- The *winning sample* (i.e. in which candle "went out") will be selected retrospectively after Ending period ends.  
+- *Sample* is a number of consequent blocks identifying a time interval inside *Ending period*.  
+  In *PoC* version, sample equals to a single block. This could be enhanced later to be a configurable parameter.  
+- The *winning sample* (i.e. in which candle "went out") will be selected retrospectively after *Ending period* ends.  
 
 
 Please see [cargo docs](#check-the-docs-out) and comments in code for deeper details. 
@@ -90,11 +89,11 @@ cd ../dns
 cargo +nightly contract build
 ```
 
-Then deploy them through the [Canvas UI](https://paritytech.github.io/canvas-ui/#/) by following [these  instructions](https://docs.substrate.io/tutorials/v3/ink-workshop/pt1/#running-a-substrate-smart-contracts-node).
+Then deploy them through the [PolkadotJS apps /contracts tab](https://polkadot.js.org/apps/?rpc=ws%3A%2F%2F127.0.0.1%3A9944#/contracts)
 
 #### Candle auction contract
 Find `candle_auction.contract` in the `target/ink` folder,  
-and deploy it through the [Canvas UI](https://paritytech.github.io/canvas-ui/#/) by following [these  instructions](https://docs.substrate.io/tutorials/v3/ink-workshop/pt1/#running-a-substrate-smart-contracts-node).
+and deploy it.
 
 ### Use it!
 **Prepare/Launch**:  
@@ -119,17 +118,11 @@ and deploy it through the [Canvas UI](https://paritytech.github.io/canvas-ui/#/)
 2. Pass the auctioned entities ownership to the contract:  
    transfer NFT tokens / domain names to the instantiated auction contract.  
 
-  > **_:exclamation:NOTE_** that sanity checks, like: *does the auction contract really possess the entities being bidded for?* - those ones are left totally on user's discretion.    
+  > **_:exclamation:NOTE_** that sanity checks, like: *does the auction contract really possess the entities being bidded for?* - those ones are left totally to user's discretion.    
 
 **Action!**:  
 
 3. Place bids by invoking `bid()` method with an attached payment.  
-   > _**:exclamation:NOTE** on bids design_:      
-   > bids are accepted at *incremental manner*, i.e. every bid adds up to bidder's balance which effectively compounds her top (highest) bid.
-   > E.g. Alice making calls:  
-   > 1. `bid()` with `101` `<Balance>` <- Alice' top bid is 101   
-   > some time later, she calls 
-   > 2. `bid()` again, with `1000` `<Balance>` <- Alice' top bid now is 1101 (*not 1000*)
 
 4. Get current auction status by `get_status()` and winner by `get_winner()` methods invocation.  
 
@@ -144,7 +137,7 @@ and deploy it through the [Canvas UI](https://paritytech.github.io/canvas-ui/#/)
 
 **Settlement**:
 
-6. Once auction is done, participants (and contract owner) can claim their payouts/rewards with `payout()`.  
+6. Once auction is done, participants (including the contract owner) can claim their payouts/rewards with `payout()`.  
    > **_:exclamation:NOTE_** that in NFT auction winner gets approval to transer all contract's ERC721 tokens with this. 
    She should then *transer* these tokens by herself by manually calling `transfer_from()` on that ERC721 contract.
 
