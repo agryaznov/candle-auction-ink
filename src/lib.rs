@@ -208,7 +208,7 @@ mod candle_auction {
         fn handle_bid(
             &mut self,
             bidder: AccountId,
-            bid_increment: Balance,
+            bid: Balance,
             block: BlockNumber,
         ) -> Result<(), Error> {
             // fail unless auction is active
@@ -219,18 +219,18 @@ mod candle_auction {
                 _ => return Err(Error::AuctionNotActive),
             };
 
-            let mut bid = bid_increment;
-            if let Some(balance) = self.balances.get(&bidder) {
-                // update new_balance = old_balance + transferred_balance
-                bid += balance;
-            }
-
             // do not accept bids lesser that current top bid
             if let Some(winning) = self.winning {
                 let winning_balance = *self.balances.get(&winning).unwrap_or(&0);
                 if bid < winning_balance {
                     return Err(Error::NotOutBidding(bid, winning_balance));
                 }
+            }
+
+            // return previous bid amount back
+            // TODO: compare gas consumption with incremental bids variant
+            if let Some(old_balance) = self.balances.take(&bidder) {
+                transfer::<Environment>(bidder, old_balance).unwrap();
             }
 
             // finally, accept bid
@@ -527,14 +527,13 @@ mod candle_auction {
         }
 
         /// Message to place a bid.  
-        /// An account can bid by sending the lacking amount so that total amount she sent to this contract covers the bid.  
-        /// In any particual point of time, the user's top bid is equal to total balance she have sent to the contract.
+        /// An account can bid by sending the bid amount to the contract.  
         #[ink(message, payable)]
         pub fn bid(&mut self) {
             let now = self.env().block_number();
             let bidder = Self::env().caller();
-            let bid_increment = self.env().transferred_balance();
-            match self.handle_bid(bidder, bid_increment, now) {
+            let bid = self.env().transferred_balance();
+            match self.handle_bid(bidder, bid, now) {
                 Err(Error::AuctionNotActive) => {
                     panic!("Auction isn't active!")
                 }
@@ -599,6 +598,24 @@ mod candle_auction {
             );
         }
 
+        fn set_balance(account_id: AccountId, balance: Balance) {
+            ink_env::test::set_account_balance::<ink_env::DefaultEnvironment>(
+                account_id, balance,
+            )
+            .expect("Cannot set account balance");
+        }
+        
+        fn get_balance(account_id: AccountId) -> Balance {
+            ink_env::test::get_account_balance::<ink_env::DefaultEnvironment>(account_id)
+                .expect("Cannot set account balance")
+        }
+
+        fn contract_id() -> AccountId {
+            ink_env::test::get_current_contract_account_id::<Environment>(
+            )
+            .expect("Cannot get contract id")
+        }
+
         #[ink::test]
         fn winner_gets_change_back() {
             // given
@@ -622,6 +639,9 @@ mod candle_auction {
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
 
+            // this is needed becase for some reason in tests payables don't add up to contract balance
+            set_balance(contract_id(),1000);
+
             // and Alice
             let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                 .unwrap()
@@ -635,6 +655,7 @@ mod candle_auction {
             auction.bid();
 
             // and then  overbids herself
+
             run_to_block::<Environment>(12);
             // Alice bids 201 by adding 101 to her bid
             set_sender::<Environment>(alice, 101);
@@ -648,31 +669,23 @@ mod candle_auction {
 
             // then
             if Some((alice, 100)) == auction.get_winner() {
-                // if Alice wins with bid 100 (not 201)
+                // if Alice wins with bid 100 (not 101)
 
-                // (we can't check that Alice gets 100 chage back
+                // (we can't check that Alice gets her 1 change back
                 // on `payout()` invocation, because the whole `reward()` will fail
                 // as cross-contract calls are not available here in off-chain tests
                 // TODO: put this into integration test)
                 // auction.payout()
-
-                // dirty hack
-                // TODO: report problem: contract balance isn't changed with called payables
-                ink_env::test::set_account_balance::<Environment>(
-                    ink_env::account_id::<Environment>(),
-                    100000000,
-                )
-                .unwrap();
 
                 // then
                 // Charlie as auction owner gets only 100 paid out to him
                 set_sender::<Environment>(charlie, 0);
                 auction.payout();
 
-                // and `change` 101 is left to Alice balance
+                // and `change` 1 is left to Alice balance
                 // (she will get it back along with her reward)
                 let change = auction.balances.take(&alice).unwrap();
-                assert_eq!(change, 101);
+                assert_eq!(change, 1);
             }
         }
 
@@ -896,9 +909,12 @@ mod candle_auction {
         #[ink::test]
         fn bidding_works() {
             // given
-            let alice = ink_env::test::default_accounts::<Environment>()
+            // Bob
+            let bob = ink_env::test::default_accounts::<Environment>()
                 .unwrap()
-                .alice;
+                .bob;
+
+            // and the auction
             let mut auction = CandleAuction::new(
                 None,
                 5,
@@ -907,28 +923,41 @@ mod candle_auction {
                 Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
+
             // when
             // Push block to 1 to make auction started
             run_to_block::<Environment>(1);
 
-            // Alice bids 100
-            set_sender::<Environment>(alice, 100);
-            auction.bid();
+            // Bob bids 100
+            set_sender::<Environment>(bob, 100);
+            assert_eq!(auction.bid(), ());
+
+            run_to_block::<Environment>(2);
 
             // then
             // bid is accepted
-            assert_eq!(auction.balances.get(&alice), Some(&100));
-            // and Alice is currently winning
-            assert_eq!(auction.winning, Some(alice));
-
-            // and
-            // further Alice' bids are adding up to her balance
-            run_to_block::<Environment>(2);
-            set_sender::<Environment>(alice, 25);
+            assert_eq!(auction.balances.get(&bob), Some(&100));
+            // and Bob is currently winning
+            assert_eq!(auction.winning, Some(bob));
+            // TODO: report problem: neither caller nor callee balances are changed with called payables
+            // and his balance decreased by the bid amount
+            // assert_eq!(get_balance(bob),25);
+            
+            // then
+            // Bob bids 125
+            set_sender::<Environment>(bob, 125);
+            // TODO: report problem to ink_env::test: neither caller nor callee balances are changed with called payables
+            set_balance(contract_id(),101);
             auction.bid();
-            assert_eq!(auction.balances.get(&alice), Some(&125));
-            // and Alice is still winning
-            assert_eq!(auction.winning, Some(alice));
+
+            run_to_block::<Environment>(5);
+            // new bid is accepted: balance is updated
+            assert_eq!(auction.balances.get(&bob), Some(&125));
+            // and Bob is still winning
+            assert_eq!(auction.winning, Some(bob));
+            // and contract paid back the first bid
+            assert_eq!(get_balance(contract_id()),1);
+
         }
 
         #[ink::test]
@@ -945,6 +974,9 @@ mod candle_auction {
                 Hash::clear(),
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
+
+            // this is needed becase for some reason in tests payables don't add up to contract balance
+            set_balance(contract_id(),1000);
 
             // Alice and Bob
             let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
@@ -968,7 +1000,7 @@ mod candle_auction {
             auction.bid();
 
             run_to_block::<Environment>(5);
-            // Bob bids 100
+            // Bob bids 101
             set_sender::<Environment>(bob, 101);
             auction.bid();
 
@@ -986,17 +1018,17 @@ mod candle_auction {
             // bids added in Ending Period
             run_to_block::<Environment>(7);
             // Alice bids 102
-            set_sender::<Environment>(alice, 2);
+            set_sender::<Environment>(alice, 102);
             auction.bid();
 
             run_to_block::<Environment>(9);
             // Bob bids 103
-            set_sender::<Environment>(bob, 2);
+            set_sender::<Environment>(bob, 103);
             auction.bid();
 
             run_to_block::<Environment>(11);
             // Alice bids 104
-            set_sender::<Environment>(alice, 2);
+            set_sender::<Environment>(alice, 104);
             auction.bid();
 
             // then
@@ -1070,6 +1102,9 @@ mod candle_auction {
                 AccountId::from(DEFAULT_CALLEE_HASH),
             );
 
+            // this is needed becase for some reason in tests payables don't add up to contract balance
+            set_balance(contract_id(),1000);
+
             // Alice and Bob
             let alice = ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                 .unwrap()
@@ -1094,17 +1129,17 @@ mod candle_auction {
             // bids added in Ending Period
             run_to_block::<Environment>(7);
             // Alice bids 102
-            set_sender::<Environment>(alice, 2);
+            set_sender::<Environment>(alice, 102);
             auction.bid();
 
             run_to_block::<Environment>(9);
             // Bob bids 103
-            set_sender::<Environment>(bob, 2);
+            set_sender::<Environment>(bob, 103);
             auction.bid();
 
             run_to_block::<Environment>(11);
             // Alice bids 104
-            set_sender::<Environment>(alice, 2);
+            set_sender::<Environment>(alice, 104);
             auction.bid();
 
             // auction ends
