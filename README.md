@@ -7,6 +7,8 @@ This is an [Ink!](https://github.com/paritytech/ink) smartcontract implementing 
 
 With this contract, one can set up a candle auction for a **NFT collection** or a **domain name**!  
 
+See my [blogpost](https://agryaznov.com/2021/12/06/candle-auction-ink/) with the rationale and detailed design description of the contract. 
+
 ## Design Considerations
 **Basic features**   
 - Contract logic is heavily inspired by the [parachain auction](https://github.com/paritytech/polkadot/blob/master/runtime/common/src/auctions.rs) implementation.
@@ -32,12 +34,12 @@ With this contract, one can set up a candle auction for a **NFT collection** or 
   - auction owner is paid by recieving the winning bid amount.
 
 **Candle-fashioned**   
-- Major feature what makes this auction _candle-fashioned_ is the randomness of winning sample selection.  
-  The contract allows you to configure the source of this randomness (see [entropy module](src/entropy.rs)). By default, it uses `ink_env::random()` function which in turn utilizes [randomness-collective-flip](https://github.com/paritytech/substrate/blob/v3.0.0/frame/randomness-collective-flip/src/lib.rs#L113).  
 - In order to make *candle* logic possible, we also store `winning_data` in featured *StorageVec* which holds bids for every *sample*.
 - *Sample* is a number of consequent blocks identifying a time interval inside *Ending period*.  
   In *PoC* version, sample equals to a single block. This could be enhanced later to be a configurable parameter.  
 - The *winning sample* (i.e. in which candle "went out") will be selected retrospectively after *Ending period* ends.  
+- Major feature what makes this auction _candle-fashioned_ is the randomness of winning sample selection.  
+  The contract allows you to configure the source of this randomness (see [entropy module](src/entropy.rs)). By default, it uses `ink_env::random()` function which in turn utilizes [randomness-collective-flip](https://github.com/paritytech/substrate/blob/v3.0.0/frame/randomness-collective-flip/src/lib.rs#L113) module. The latter provides generator of low-influence random values based on the block hashes from the last `81` blocks. It means that when using this particular random function, it is required to wait at least 81 blocks after the last block of *Ending* period until invoking the function to get a random block inside that period. 
 
 
 Please see [cargo docs](#check-the-docs-out) and comments in code for deeper details. 
@@ -89,7 +91,7 @@ cd ../dns
 cargo +nightly contract build
 ```
 
-Then deploy them through the [PolkadotJS apps /contracts tab](https://polkadot.js.org/apps/?rpc=ws%3A%2F%2F127.0.0.1%3A9944#/contracts)
+Then deploy them through the [*PolkadotJS apps /contracts tab*](https://polkadot.js.org/apps/?rpc=ws%3A%2F%2F127.0.0.1%3A9944#/contracts)
 
 #### Candle auction contract
 Find `candle_auction.contract` in the `target/ink` folder,  
