@@ -278,7 +278,7 @@ mod candle_auction {
             // winner gets her reward
             if to == winner {
                 // reward winner with specified reward method call
-                reward(&self, to);
+                reward(&self, self.owner);
             }
             // whoever calls this should get his balance paid back
             if let Some(bal) = self.balances.take(&to) {
