@@ -464,6 +464,7 @@ mod candle_auction {
                         // finalize auction
                         // this is needed for the case when
                         // candle-detected winner is None, which is fair enough to be a result
+                        // e.g. when there were no bids at all before and in decisive round
                         self.finalized = true;
                         self.winner
                     } else {

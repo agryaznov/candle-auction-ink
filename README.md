@@ -126,7 +126,7 @@ and deploy it.
 
 3. Place bids by invoking `bid()` method with an attached payment.  
 
-4. Get current auction status by `get_status()` and winner by `get_winner()` methods invocation.  
+4. Get current auction status by `get_status()` and current winning bid and account by `get_winning()` methods invocation.  
 
 5. Once auction is ended, anyone can invoke `find_winner()` method to randomly detect a block during Ending period and set the auction winner to be the top bidder of that block. This effectively emulates candle blow for the auction.  
    > _**:exclamation:NOTE-1**_ that `random()` function [implementation](https://github.com/paritytech/substrate/blob/v3.0.0/frame/randomness-collective-flip/src/lib.rs#L113) used in *substrate-contract-node*
