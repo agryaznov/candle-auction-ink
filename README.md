@@ -3,7 +3,7 @@
 > **Use at your own risk**. 
 
 # 🕯️ Candle Auctions on Ink! 🎃
-This is an [Ink!](https://github.com/paritytech/ink) smartcontract implementing a [candle auction](https://github.com/paritytech/ink) logic.
+This is an [Ink!](https://github.com/paritytech/ink) smartcontract implementing a [candle auction](https://en.wikipedia.org/wiki/Candle_auction) logic.
 
 With this contract, one can set up a candle auction for a **NFT collection** or a **domain name**!  
 
